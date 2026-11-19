@@ -119,7 +119,8 @@ on the host).
 
   The same character, in a persistent idle pose, is also the "is Periscope running" indicator
   and app launcher described above — click it any time to reopen the Claude Desktop/claude.ai
-  picker.
+  picker. **Drag it** anywhere on screen to reposition it; a plain click (no movement) opens
+  the picker, a click-and-drag just moves it. Its position is remembered across restarts.
 
   **Customize it** by editing `assets/avatar.config.json`. The transient per-action avatar
   (above) reads it fresh before every popup — no rebuild, no restart. The persistent idle robot

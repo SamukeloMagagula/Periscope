@@ -67,10 +67,16 @@ $openItem.Add_Click({ Start-Process $DashboardUrl }.GetNewClosure())
 $exitItem.Add_Click({ Stop-EyesHost }.GetNewClosure())
 $trayIcon.Add_DoubleClick({ Start-Process $DashboardUrl }.GetNewClosure())
 
-# --- Idle, clickable avatar: click opens the Claude Desktop / claude.ai picker ---
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$idleX = [int]($screen.Width / 2)
-$idleY = [int]($screen.Height / 2)
+# --- Idle, clickable, draggable avatar: click opens the picker, drag repositions it ---
+$savedPos = Get-EyesAvatarPosition
+if ($savedPos) {
+    $idleX = $savedPos.x
+    $idleY = $savedPos.y
+} else {
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $idleX = [int]($screen.Width / 2)
+    $idleY = [int]($screen.Height / 2)
+}
 $cfg = Get-EyesAvatarConfig
 
 $idleAvatar = New-Object ClaudeEyes.AvatarForm
@@ -92,11 +98,51 @@ $idleAvatar.ShoulderLightsEnabled = [bool]$cfg.shoulderLights
 $idleAvatar.ChestCoreEnabled = [bool]$cfg.chestCore
 $idleAvatar.Cursor = [System.Windows.Forms.Cursors]::Hand
 
-$idleAvatar.Add_Click({
-    $idleAvatar.Hide()
-    Show-EyesLauncherPicker
-    $idleAvatar.Close()
+# A plain click opens the picker; a click-and-drag repositions the robot instead - the two
+# are told apart by whether the mouse moved more than a few pixels between down and up.
+$dragState = @{ dragging = $false; moved = $false; startMouse = $null; startForm = $null }
+
+$idleAvatar.Add_MouseDown({
+    param($mdSender, $mdArgs)
+    if ($mdArgs.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        $dragState.dragging = $true
+        $dragState.moved = $false
+        $dragState.startMouse = [System.Windows.Forms.Cursor]::Position
+        $dragState.startForm = $idleAvatar.Location
+        $idleAvatar.Capture = $true
+    }
 }.GetNewClosure())
+
+$idleAvatar.Add_MouseMove({
+    param($mmSender, $mmArgs)
+    if ($dragState.dragging) {
+        $cur = [System.Windows.Forms.Cursor]::Position
+        $dx = $cur.X - $dragState.startMouse.X
+        $dy = $cur.Y - $dragState.startMouse.Y
+        if ([Math]::Abs($dx) -gt 3 -or [Math]::Abs($dy) -gt 3) { $dragState.moved = $true }
+        $idleAvatar.Location = New-Object System.Drawing.Point(($dragState.startForm.X + $dx), ($dragState.startForm.Y + $dy))
+    }
+}.GetNewClosure())
+
+$idleAvatar.Add_MouseUp({
+    param($muSender, $muArgs)
+    if (-not $dragState.dragging) { return }
+    $dragState.dragging = $false
+    $idleAvatar.Capture = $false
+
+    if ($dragState.moved) {
+        # Persist the anchor point using the same (X, Y) convention Show-EyesAvatar takes:
+        # the point the character's feet stand on, not the form's top-left corner.
+        $anchorX = $idleAvatar.Location.X + 60
+        $anchorY = $idleAvatar.Location.Y + ($idleAvatar.Height - 14)
+        Save-EyesAvatarPosition -X $anchorX -Y $anchorY
+    } else {
+        $idleAvatar.Hide()
+        Show-EyesLauncherPicker
+        $idleAvatar.Close()
+    }
+}.GetNewClosure())
+
 $idleAvatar.Show()
 
 # --- Localhost dashboard (no admin rights needed: "localhost" prefix, not a wildcard) ---

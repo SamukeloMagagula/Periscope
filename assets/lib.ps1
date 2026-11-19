@@ -8,6 +8,7 @@ Add-Type -AssemblyName System.Drawing
 # and the persistent hud.ps1 can agree on activity history / autonomous-task status.
 $EyesLogPath = Join-Path $env:TEMP "periscope-activity.log"
 $EyesTaskPath = Join-Path $env:TEMP "periscope-task.json"
+$EyesAvatarPosPath = Join-Path $env:TEMP "periscope-avatar-pos.json"
 
 if (-not ("ClaudeEyes.Native" -as [type])) {
 Add-Type -Namespace ClaudeEyes -Name Native -MemberDefinition @"
@@ -378,6 +379,23 @@ function Start-EyesAutoTask {
 function Stop-EyesAutoTask {
     if (Test-Path $EyesTaskPath) { Remove-Item -Path $EyesTaskPath -Force -ErrorAction SilentlyContinue }
     return @{ ended = $true }
+}
+
+function Get-EyesAvatarPosition {
+    # Where the idle robot was last dragged to, so it stays put across host.ps1 restarts
+    # instead of always resetting to the screen center.
+    if (Test-Path $EyesAvatarPosPath) {
+        try {
+            $pos = Get-Content -Raw -Path $EyesAvatarPosPath | ConvertFrom-Json
+            return @{ x = [int]$pos.x; y = [int]$pos.y }
+        } catch {}
+    }
+    return $null
+}
+
+function Save-EyesAvatarPosition {
+    param([int]$X, [int]$Y)
+    @{ x = $X; y = $Y } | ConvertTo-Json -Compress | Out-File -Encoding utf8 -FilePath $EyesAvatarPosPath
 }
 
 function Show-EyesToast {
