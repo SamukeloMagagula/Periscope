@@ -41,13 +41,23 @@ namespace ClaudeEyes {
 "@
 }
 
-if (-not ("ClaudeEyes.RingForm" -as [type])) {
+if (-not ("ClaudeEyes.AvatarForm" -as [type])) {
 Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing -TypeDefinition @"
-using System.Windows.Forms;
+using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Windows.Forms;
 
 namespace ClaudeEyes {
-    public class RingForm : Form {
+    // A small glossy "bubble" character whose face/pose changes by State, bobs gently,
+    // blinks, and shows a thought bubble while thinking. All animation is computed from
+    // wall-clock elapsed time (StartTicks/TotalMs), so the caller only needs to Invalidate()
+    // on a timer loop - no per-frame state needs to be pushed in from PowerShell.
+    public class AvatarForm : Form {
+        public string State = "thinking"; // thinking | acting | happy | denied
+        public long StartTicks;
+        public double TotalMs = 600;
+
         protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams {
             get {
@@ -56,9 +66,105 @@ namespace ClaudeEyes {
                 return cp;
             }
         }
+
         protected override void OnPaint(PaintEventArgs e) {
-            using (Pen pen = new Pen(Color.FromArgb(255, 70, 160, 255), 3)) {
-                e.Graphics.DrawEllipse(pen, 4, 4, this.Width - 8, this.Height - 8);
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            double elapsedMs = (DateTime.Now.Ticks - StartTicks) / 10000.0;
+            double progress = Math.Min(1.0, Math.Max(0.0, elapsedMs / Math.Max(1.0, TotalMs)));
+            double bob = Math.Sin(elapsedMs / 220.0) * 3.0;
+            bool blink = (((long)(elapsedMs / 180.0)) % 23) == 0;
+            bool happy = (State == "happy") || (State == "acting" && progress > 0.72);
+
+            int bodySize = 44;
+            int cx = 45; // fixed anchor, independent of Width, so widening the canvas for the
+                         // thought bubble doesn't shift the body off the (X, Y) target point
+            int cy = this.Height - 28 + (int)bob;
+
+            Color baseColor = Color.FromArgb(70, 160, 255);
+            if (State == "denied") baseColor = Color.FromArgb(220, 90, 90);
+            if (happy) baseColor = Color.FromArgb(90, 200, 140);
+
+            Rectangle bodyRect = new Rectangle(cx - bodySize / 2, cy - bodySize / 2, bodySize, bodySize);
+            using (GraphicsPath path = new GraphicsPath()) {
+                path.AddEllipse(bodyRect);
+                using (PathGradientBrush brush = new PathGradientBrush(path)) {
+                    brush.CenterColor = ControlPaint.Light(baseColor, 0.5f);
+                    brush.SurroundColors = new Color[] { ControlPaint.Dark(baseColor, 0.1f) };
+                    brush.CenterPoint = new PointF(bodyRect.Left + bodySize * 0.33f, bodyRect.Top + bodySize * 0.3f);
+                    g.FillEllipse(brush, bodyRect);
+                }
+            }
+            using (Pen outline = new Pen(ControlPaint.Dark(baseColor), 1.5f)) {
+                g.DrawEllipse(outline, bodyRect);
+            }
+
+            int eyeW = 7, eyeH = blink ? 1 : 9;
+            int eyeY = cy - 4 - eyeH / 2;
+            int eyeOffsetX = 9;
+            int pupilShiftX = 0, pupilShiftY = 0;
+            if (State == "thinking") { pupilShiftX = -1; pupilShiftY = -2; }
+            if (State == "acting" && !happy) { pupilShiftY = 1; }
+
+            using (Brush white = new SolidBrush(Color.White))
+            using (Brush black = new SolidBrush(Color.FromArgb(40, 40, 40))) {
+                Rectangle leftEye = new Rectangle(cx - eyeOffsetX - eyeW / 2, eyeY, eyeW, eyeH);
+                Rectangle rightEye = new Rectangle(cx + eyeOffsetX - eyeW / 2, eyeY, eyeW, eyeH);
+                if (!blink && !happy) {
+                    g.FillEllipse(white, leftEye);
+                    g.FillEllipse(white, rightEye);
+                    int pupilW = 3, pupilH = Math.Max(1, eyeH - 3);
+                    g.FillEllipse(black, leftEye.X + eyeW / 2 - pupilW / 2 + pupilShiftX, leftEye.Y + eyeH / 2 - pupilH / 2 + pupilShiftY, pupilW, pupilH);
+                    g.FillEllipse(black, rightEye.X + eyeW / 2 - pupilW / 2 + pupilShiftX, rightEye.Y + eyeH / 2 - pupilH / 2 + pupilShiftY, pupilW, pupilH);
+                } else {
+                    // closed/blinking (and happy eyes are always drawn as closed upward arcs)
+                    using (Pen lid = new Pen(Color.FromArgb(40, 40, 40), 1.5f)) {
+                        if (happy) {
+                            g.DrawArc(lid, leftEye.X - 1, leftEye.Y, eyeW + 2, 8, 180, 180);
+                            g.DrawArc(lid, rightEye.X - 1, rightEye.Y, eyeW + 2, 8, 180, 180);
+                        } else {
+                            g.DrawLine(lid, leftEye.X, leftEye.Y + eyeH / 2, leftEye.Right, leftEye.Y + eyeH / 2);
+                            g.DrawLine(lid, rightEye.X, rightEye.Y + eyeH / 2, rightEye.Right, rightEye.Y + eyeH / 2);
+                        }
+                    }
+                }
+            }
+
+            using (Pen mouthPen = new Pen(Color.FromArgb(40, 40, 40), 2f)) {
+                int mouthY = cy + 8;
+                if (happy) {
+                    Rectangle smileRect = new Rectangle(cx - 7, mouthY - 6, 14, 10);
+                    g.DrawArc(mouthPen, smileRect, 15, 150);
+                } else if (State == "thinking") {
+                    g.DrawEllipse(mouthPen, cx - 2, mouthY - 2, 4, 4);
+                } else if (State == "denied") {
+                    Rectangle frownRect = new Rectangle(cx - 7, mouthY - 2, 14, 10);
+                    g.DrawArc(mouthPen, frownRect, 200, 150);
+                } else {
+                    g.DrawLine(mouthPen, cx - 6, mouthY, cx + 6, mouthY);
+                }
+            }
+
+            if (State == "thinking") {
+                int bx = cx + bodySize / 2 + 2;
+                int by = bodyRect.Top - 6;
+                using (Brush bubbleBrush = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
+                using (Pen bubblePen = new Pen(Color.FromArgb(180, 180, 190), 1f)) {
+                    g.FillEllipse(bubbleBrush, bx, by + 14, 6, 6);
+                    g.DrawEllipse(bubblePen, bx, by + 14, 6, 6);
+                    g.FillEllipse(bubbleBrush, bx + 5, by + 6, 8, 8);
+                    g.DrawEllipse(bubblePen, bx + 5, by + 6, 8, 8);
+                    Rectangle bubbleRect = new Rectangle(bx + 10, by - 16, 34, 22);
+                    g.FillEllipse(bubbleBrush, bubbleRect);
+                    g.DrawEllipse(bubblePen, bubbleRect);
+                    using (Brush dot = new SolidBrush(Color.FromArgb(90, 90, 100))) {
+                        int dotY = bubbleRect.Top + bubbleRect.Height / 2 - 2;
+                        g.FillEllipse(dot, bubbleRect.Left + 6, dotY, 4, 4);
+                        g.FillEllipse(dot, bubbleRect.Left + 15, dotY, 4, 4);
+                        g.FillEllipse(dot, bubbleRect.Left + 24, dotY, 4, 4);
+                    }
+                }
             }
         }
     }
@@ -66,27 +172,39 @@ namespace ClaudeEyes {
 "@
 }
 
-function Show-EyesCursorRing {
-    # Draws a blue ring at the target point right before a click/move, distinct from the
-    # real mouse cursor, so it's visually obvious *where* the agent is about to act.
-    param([int]$X, [int]$Y, [int]$DurationMs = 450)
+function Get-EyesAvatarDefaultPoint {
+    # Where the avatar shows up for actions with no on-screen target coordinates
+    # (type_text, send_keys, focus_window, set_clipboard, task start/denial).
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    return @{ x = $screen.Right - 170; y = $screen.Bottom - 170 }
+}
 
-    $size = 46
-    $form = New-Object ClaudeEyes.RingForm
+function Show-EyesAvatar {
+    # state: thinking | acting | happy | denied
+    param([int]$X, [int]$Y, [string]$State = "acting", [int]$DurationMs = 650)
+
+    # Width is wider than the character itself (cx is fixed at 45 in AvatarForm) to leave
+    # room for the thought bubble, which extends right of the body without clipping.
+    $w = 140; $h = 110
+    $form = New-Object ClaudeEyes.AvatarForm
     $form.FormBorderStyle = "None"
     $form.StartPosition = "Manual"
     $form.TopMost = $true
     $form.ShowInTaskbar = $false
-    $form.Size = New-Object System.Drawing.Size($size, $size)
-    $form.Location = New-Object System.Drawing.Point(($X - [int]($size / 2)), ($Y - [int]($size / 2)))
+    $form.Size = New-Object System.Drawing.Size($w, $h)
+    $form.Location = New-Object System.Drawing.Point(($X - 45), ($Y - ($h - 28)))
     $form.BackColor = [System.Drawing.Color]::Magenta
     $form.TransparencyKey = [System.Drawing.Color]::Magenta
+    $form.State = $State
+    $form.StartTicks = [DateTime]::Now.Ticks
+    $form.TotalMs = $DurationMs
 
     $form.Show()
     $deadline = (Get-Date).AddMilliseconds($DurationMs)
     while ((Get-Date) -lt $deadline) {
+        $form.Invalidate()
         [System.Windows.Forms.Application]::DoEvents()
-        Start-Sleep -Milliseconds 20
+        Start-Sleep -Milliseconds 30
     }
     $form.Close()
     $form.Dispose()

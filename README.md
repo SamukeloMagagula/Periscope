@@ -32,14 +32,23 @@ host).
 
 ### On-screen activity indicators
 
-- Every action logs a short-lived, non-activating toast (`WS_EX_NOACTIVATE`) in a screen
-  corner describing what ran. Non-activating so it never steals keyboard focus from whatever
-  window an action is about to type into.
-- `click`/`move_mouse` flash a ring at the target coordinates immediately before acting, as a
-  visual marker distinct from the real cursor.
-- `assets/hud.ps1` is a persistent, single-instance (named mutex), always-on-top panel that
-  tails a shared activity log and shows a running history of all actions. The MCP server spawns
-  it automatically on startup; run it manually with `npm run hud` if it's been closed.
+- **Avatar.** A small glossy, animated character (gradient-shaded circle with a simple
+  face — no external image/3D assets, pure GDI+ drawing in `assets/lib.ps1`) appears at the
+  relevant screen location for every mutating action: "thinking" with a thought bubble right
+  before the confirm dialog, "acting" (focused expression) while the action executes, easing
+  into a brief "happy" smile at the end, or "denied" if you decline the confirm dialog. It
+  bobs and blinks continuously via wall-clock-driven animation (`AvatarForm.OnPaint`), and
+  appears at the action's target coordinates for `click`/`move_mouse`, or a fixed default spot
+  for actions with no on-screen target (`type_text`, `send_keys`, `focus_window`,
+  `set_clipboard`). It's a non-activating, layered window (`WS_EX_NOACTIVATE`), so it never
+  steals keyboard focus.
+- **Toast.** A short-lived text toast in a screen corner describing what ran. Shown for
+  read-only actions and task start/end; skipped for actions that already show the avatar, to
+  avoid redundant overlays and latency.
+- **HUD.** `assets/hud.ps1` is a persistent, single-instance (named mutex), always-on-top
+  panel that tails a shared activity log and shows a running history of all actions. The MCP
+  server spawns it automatically on startup; run it manually with `npm run hud` if it's been
+  closed.
 
 ### Bounded autonomous mode
 
@@ -147,10 +156,10 @@ with `click`/`type_text`/`send_keys`, `screenshot` again to verify the result.
 ```
 src/index.ts        MCP server: tool schemas (zod), dispatch to powershell.ts, HUD auto-spawn
 src/powershell.ts    spawns assets/run.ps1 per action, parses its JSON stdout
-assets/lib.ps1       screen/mouse/keyboard/window/clipboard implementations; toast and cursor-ring
+assets/lib.ps1       screen/mouse/keyboard/window/clipboard implementations; avatar and toast
                       overlays; shared activity-log and autonomous-task state helpers
-assets/run.ps1       dispatches -Action to the matching function; confirm dialog, toast, cursor
-                      ring, and auto-task state checks happen here
+assets/run.ps1       dispatches -Action to the matching function; confirm dialog, avatar, toast,
+                      and auto-task state checks happen here
 assets/hud.ps1       persistent always-on-top narration panel; tails the shared activity log
 assets/launcher.ps1  app picker; merges claude_desktop_config.json; launches Claude Desktop
 Launch Periscope.cmd shortcut to assets/launcher.ps1
@@ -167,7 +176,10 @@ Launch Periscope.cmd shortcut to assets/launcher.ps1
 - No OCR or UI-element detection — the calling model reads the screenshot image directly to
   compute click targets.
 - Each action spawns a new `powershell.exe` process; expect roughly 0.5-1s of fixed overhead
-  per call before the action itself runs.
+  per call before the action itself runs, plus another ~1-1.5s for mutating actions while the
+  avatar's thinking/acting animation plays (not counting time spent waiting on the confirm
+  dialog itself). Set `PERISCOPE_CONFIRM=0` only reduces the confirm-dialog wait, not the
+  avatar animation time.
 
 ## License
 
