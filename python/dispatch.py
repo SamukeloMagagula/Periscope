@@ -24,7 +24,7 @@ def _confirm_or_raise(root, cfg, params, message):
         return
     pt = _target_point(root, params)
     show_avatar_blocking(root, pt["x"], pt["y"], state="thinking", duration_ms=550, cfg=cfg)
-    if not confirm_action(message):
+    if not confirm_action(root, message):
         show_avatar_blocking(root, pt["x"], pt["y"], state="denied", duration_ms=500, cfg=cfg)
         raise ActionDenied(f"User denied the action: {message}")
 

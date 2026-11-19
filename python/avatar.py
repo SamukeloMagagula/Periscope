@@ -204,8 +204,23 @@ class AvatarWindow:
                 c.create_oval(brx0 + dx, dot_y, brx0 + dx + 4, dot_y + 4, fill="#5a5a64", outline="")
 
 
-def confirm_action(message: str) -> bool:
-    return messagebox.askyesno("Periscope - Confirm Action", f"{message}\n\nAllow this action?")
+def confirm_action(root, message: str) -> bool:
+    # A plain messagebox.askyesno() with no parent can open BEHIND other windows (VS Code,
+    # a browser, etc.) instead of on top - found live: it silently blocked the whole host
+    # (confirm dialogs run on the main thread) with no visible indication why. A topmost,
+    # transient anchor window forces the dialog itself to the front, matching the old
+    # PowerShell version's explicit TopMost owner form.
+    anchor = tk.Toplevel(root)
+    anchor.withdraw()
+    anchor.attributes("-topmost", True)
+    anchor.update_idletasks()
+    try:
+        result = messagebox.askyesno(
+            "Periscope - Confirm Action", f"{message}\n\nAllow this action?", parent=anchor
+        )
+    finally:
+        anchor.destroy()
+    return result
 
 
 def show_toast(root, text: str, duration_ms: int = 1100):
