@@ -49,14 +49,22 @@ using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 
 namespace ClaudeEyes {
-    // A small glossy "bubble" character whose face/pose changes by State, bobs gently,
-    // blinks, and shows a thought bubble while thinking. All animation is computed from
-    // wall-clock elapsed time (StartTicks/TotalMs), so the caller only needs to Invalidate()
-    // on a timer loop - no per-frame state needs to be pushed in from PowerShell.
+    // A small customizable mech character - arms, legs, a visor-eyed head, and optional
+    // antenna/shoulder-lights/chest-core accessories - whose pose/visor color changes by
+    // State, bobs gently, and shows a thought bubble while thinking. All animation is
+    // computed from wall-clock elapsed time (StartTicks/TotalMs), so the caller only needs
+    // to Invalidate() on a timer loop - no per-frame state needs pushing in from PowerShell.
+    // Colors/accessories are plain public fields PowerShell sets before Show(), read from
+    // avatar.config.json by Show-EyesAvatar.
     public class AvatarForm : Form {
         public string State = "thinking"; // thinking | acting | happy | denied
         public long StartTicks;
         public double TotalMs = 600;
+        public Color PrimaryColor = Color.FromArgb(70, 160, 255);
+        public Color AccentColor = Color.FromArgb(255, 209, 102);
+        public bool AntennaEnabled = true;
+        public bool ShoulderLightsEnabled = true;
+        public bool ChestCoreEnabled = true;
 
         protected override bool ShowWithoutActivation { get { return true; } }
         protected override CreateParams CreateParams {
@@ -67,104 +75,163 @@ namespace ClaudeEyes {
             }
         }
 
+        private static GraphicsPath RoundedRect(Rectangle r, int radius) {
+            GraphicsPath path = new GraphicsPath();
+            int d = radius * 2;
+            path.AddArc(r.Left, r.Top, d, d, 180, 90);
+            path.AddArc(r.Right - d, r.Top, d, d, 270, 90);
+            path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+            path.AddArc(r.Left, r.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
+        }
+
+        private static void GetArmOffsets(string state, bool happy, bool isLead, out int ex, out int ey, out int hx, out int hy) {
+            if (happy) { ex = 12; ey = -10; hx = 16; hy = -22; return; }
+            if (state == "denied") { ex = 4; ey = 16; hx = 2; hy = 30; return; }
+            if (state == "thinking" && isLead) { ex = 6; ey = 2; hx = 0; hy = -8; return; }
+            if (state == "acting") { ex = 12; ey = 10; hx = 20; hy = 16; return; }
+            ex = 10; ey = 14; hx = 14; hy = 28; // idle fallback
+        }
+
+        private static void DrawThoughtBubble(Graphics g, int bx, int by) {
+            using (Brush bubbleBrush = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
+            using (Pen bubblePen = new Pen(Color.FromArgb(180, 180, 190), 1f)) {
+                g.FillEllipse(bubbleBrush, bx, by + 14, 6, 6);
+                g.DrawEllipse(bubblePen, bx, by + 14, 6, 6);
+                g.FillEllipse(bubbleBrush, bx + 5, by + 6, 8, 8);
+                g.DrawEllipse(bubblePen, bx + 5, by + 6, 8, 8);
+                Rectangle bubbleRect = new Rectangle(bx + 10, by - 16, 34, 22);
+                g.FillEllipse(bubbleBrush, bubbleRect);
+                g.DrawEllipse(bubblePen, bubbleRect);
+                using (Brush dot = new SolidBrush(Color.FromArgb(90, 90, 100))) {
+                    int dotY = bubbleRect.Top + bubbleRect.Height / 2 - 2;
+                    g.FillEllipse(dot, bubbleRect.Left + 6, dotY, 4, 4);
+                    g.FillEllipse(dot, bubbleRect.Left + 15, dotY, 4, 4);
+                    g.FillEllipse(dot, bubbleRect.Left + 24, dotY, 4, 4);
+                }
+            }
+        }
+
         protected override void OnPaint(PaintEventArgs e) {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             double elapsedMs = (DateTime.Now.Ticks - StartTicks) / 10000.0;
             double progress = Math.Min(1.0, Math.Max(0.0, elapsedMs / Math.Max(1.0, TotalMs)));
-            double bob = Math.Sin(elapsedMs / 220.0) * 3.0;
-            bool blink = (((long)(elapsedMs / 180.0)) % 23) == 0;
+            double bob = Math.Sin(elapsedMs / 260.0) * 2.5;
             bool happy = (State == "happy") || (State == "acting" && progress > 0.72);
+            bool thinking = (State == "thinking");
 
-            int bodySize = 44;
-            int cx = 45; // fixed anchor, independent of Width, so widening the canvas for the
-                         // thought bubble doesn't shift the body off the (X, Y) target point
-            int cy = this.Height - 28 + (int)bob;
+            int cx = 60;
+            int groundY = (this.Height - 14) + (int)bob;
+            int legLen = 26;
+            int hipY = groundY - legLen;
+            int torsoH = 32;
+            int torsoTopY = hipY - torsoH;
+            int shoulderY = torsoTopY + 6;
+            int headW = 26, headH = 20;
+            int headBottomY = torsoTopY - 2;
+            int headTopY = headBottomY - headH;
+            int headCenterY = (headTopY + headBottomY) / 2;
 
-            Color baseColor = Color.FromArgb(70, 160, 255);
-            if (State == "denied") baseColor = Color.FromArgb(220, 90, 90);
-            if (happy) baseColor = Color.FromArgb(90, 200, 140);
+            Color plate = PrimaryColor;
+            Color plateDark = ControlPaint.Dark(plate, 0.25f);
+            Color plateLight = ControlPaint.Light(plate, 0.3f);
+            Color glow = (State == "denied") ? Color.FromArgb(230, 70, 70) : AccentColor;
 
-            Rectangle bodyRect = new Rectangle(cx - bodySize / 2, cy - bodySize / 2, bodySize, bodySize);
-            using (GraphicsPath path = new GraphicsPath()) {
-                path.AddEllipse(bodyRect);
-                using (PathGradientBrush brush = new PathGradientBrush(path)) {
-                    brush.CenterColor = ControlPaint.Light(baseColor, 0.5f);
-                    brush.SurroundColors = new Color[] { ControlPaint.Dark(baseColor, 0.1f) };
-                    brush.CenterPoint = new PointF(bodyRect.Left + bodySize * 0.33f, bodyRect.Top + bodySize * 0.3f);
-                    g.FillEllipse(brush, bodyRect);
+            using (Pen outline = new Pen(plateDark, 1.6f))
+            using (Brush plateBrush = new SolidBrush(plate))
+            using (Brush plateLightBrush = new SolidBrush(plateLight)) {
+
+                for (int i = 0; i < 2; i++) {
+                    int side = (i == 0) ? -1 : 1;
+                    int hipX = cx + side * 9;
+                    double phase = elapsedMs / 260.0 + i * Math.PI;
+                    int kneeWobble = (int)(Math.Sin(phase) * 2);
+                    int kneeX = hipX + side * 2;
+                    int kneeY = hipY + legLen / 2 + kneeWobble;
+                    int footX = hipX + side * 3;
+                    int footY = groundY;
+                    using (Pen leg = new Pen(plate, 7f)) {
+                        leg.StartCap = LineCap.Round;
+                        leg.EndCap = LineCap.Round;
+                        g.DrawLine(leg, hipX, hipY, kneeX, kneeY);
+                        g.DrawLine(leg, kneeX, kneeY, footX, footY);
+                    }
+                    g.FillRectangle(plateBrush, footX - 6, footY - 2, 12, 5);
+                    g.DrawRectangle(outline, footX - 6, footY - 2, 12, 5);
                 }
-            }
-            using (Pen outline = new Pen(ControlPaint.Dark(baseColor), 1.5f)) {
-                g.DrawEllipse(outline, bodyRect);
-            }
 
-            int eyeW = 7, eyeH = blink ? 1 : 9;
-            int eyeY = cy - 4 - eyeH / 2;
-            int eyeOffsetX = 9;
-            int pupilShiftX = 0, pupilShiftY = 0;
-            if (State == "thinking") { pupilShiftX = -1; pupilShiftY = -2; }
-            if (State == "acting" && !happy) { pupilShiftY = 1; }
+                Rectangle torsoRect = new Rectangle(cx - 15, torsoTopY, 30, torsoH);
+                using (GraphicsPath tp = RoundedRect(torsoRect, 5)) {
+                    g.FillPath(plateBrush, tp);
+                    g.DrawPath(outline, tp);
+                }
+                if (ChestCoreEnabled) {
+                    double corePulse = 0.5 + 0.5 * Math.Sin(elapsedMs / 180.0);
+                    int coreAlpha = (int)(120 + corePulse * 135);
+                    using (Brush core = new SolidBrush(Color.FromArgb(coreAlpha, glow))) {
+                        g.FillEllipse(core, cx - 5, torsoTopY + torsoH / 2 - 5, 10, 10);
+                    }
+                }
 
-            using (Brush white = new SolidBrush(Color.White))
-            using (Brush black = new SolidBrush(Color.FromArgb(40, 40, 40))) {
-                Rectangle leftEye = new Rectangle(cx - eyeOffsetX - eyeW / 2, eyeY, eyeW, eyeH);
-                Rectangle rightEye = new Rectangle(cx + eyeOffsetX - eyeW / 2, eyeY, eyeW, eyeH);
-                if (!blink && !happy) {
-                    g.FillEllipse(white, leftEye);
-                    g.FillEllipse(white, rightEye);
-                    int pupilW = 3, pupilH = Math.Max(1, eyeH - 3);
-                    g.FillEllipse(black, leftEye.X + eyeW / 2 - pupilW / 2 + pupilShiftX, leftEye.Y + eyeH / 2 - pupilH / 2 + pupilShiftY, pupilW, pupilH);
-                    g.FillEllipse(black, rightEye.X + eyeW / 2 - pupilW / 2 + pupilShiftX, rightEye.Y + eyeH / 2 - pupilH / 2 + pupilShiftY, pupilW, pupilH);
-                } else {
-                    // closed/blinking (and happy eyes are always drawn as closed upward arcs)
-                    using (Pen lid = new Pen(Color.FromArgb(40, 40, 40), 1.5f)) {
-                        if (happy) {
-                            g.DrawArc(lid, leftEye.X - 1, leftEye.Y, eyeW + 2, 8, 180, 180);
-                            g.DrawArc(lid, rightEye.X - 1, rightEye.Y, eyeW + 2, 8, 180, 180);
-                        } else {
-                            g.DrawLine(lid, leftEye.X, leftEye.Y + eyeH / 2, leftEye.Right, leftEye.Y + eyeH / 2);
-                            g.DrawLine(lid, rightEye.X, rightEye.Y + eyeH / 2, rightEye.Right, rightEye.Y + eyeH / 2);
+                for (int i = 0; i < 2; i++) {
+                    int side = (i == 0) ? -1 : 1;
+                    bool isLead = side > 0;
+                    int sx = cx + side * 14;
+                    int ex, ey, hx, hy;
+                    GetArmOffsets(State, happy, isLead, out ex, out ey, out hx, out hy);
+                    int elbowX = sx + side * ex, elbowY = shoulderY + ey;
+                    int handX = sx + side * hx, handY = shoulderY + hy;
+                    using (Pen arm = new Pen(plate, 6f)) {
+                        arm.StartCap = LineCap.Round;
+                        arm.EndCap = LineCap.Round;
+                        g.DrawLine(arm, sx, shoulderY, elbowX, elbowY);
+                        g.DrawLine(arm, elbowX, elbowY, handX, handY);
+                    }
+                    using (Brush jointBrush = new SolidBrush(plateDark)) {
+                        g.FillEllipse(jointBrush, sx - 3, shoulderY - 3, 6, 6);
+                        g.FillEllipse(jointBrush, handX - 3, handY - 3, 6, 6);
+                    }
+                    if (ShoulderLightsEnabled) {
+                        using (Brush sl = new SolidBrush(glow)) {
+                            g.FillEllipse(sl, sx - 2, shoulderY - 2, 4, 4);
                         }
                     }
                 }
-            }
 
-            using (Pen mouthPen = new Pen(Color.FromArgb(40, 40, 40), 2f)) {
-                int mouthY = cy + 8;
-                if (happy) {
-                    Rectangle smileRect = new Rectangle(cx - 7, mouthY - 6, 14, 10);
-                    g.DrawArc(mouthPen, smileRect, 15, 150);
-                } else if (State == "thinking") {
-                    g.DrawEllipse(mouthPen, cx - 2, mouthY - 2, 4, 4);
-                } else if (State == "denied") {
-                    Rectangle frownRect = new Rectangle(cx - 7, mouthY - 2, 14, 10);
-                    g.DrawArc(mouthPen, frownRect, 200, 150);
-                } else {
-                    g.DrawLine(mouthPen, cx - 6, mouthY, cx + 6, mouthY);
+                Rectangle headRect = new Rectangle(cx - headW / 2, headTopY, headW, headH);
+                using (GraphicsPath hp = RoundedRect(headRect, 6)) {
+                    g.FillPath(plateLightBrush, hp);
+                    g.DrawPath(outline, hp);
                 }
-            }
 
-            if (State == "thinking") {
-                int bx = cx + bodySize / 2 + 2;
-                int by = bodyRect.Top - 6;
-                using (Brush bubbleBrush = new SolidBrush(Color.FromArgb(235, 255, 255, 255)))
-                using (Pen bubblePen = new Pen(Color.FromArgb(180, 180, 190), 1f)) {
-                    g.FillEllipse(bubbleBrush, bx, by + 14, 6, 6);
-                    g.DrawEllipse(bubblePen, bx, by + 14, 6, 6);
-                    g.FillEllipse(bubbleBrush, bx + 5, by + 6, 8, 8);
-                    g.DrawEllipse(bubblePen, bx + 5, by + 6, 8, 8);
-                    Rectangle bubbleRect = new Rectangle(bx + 10, by - 16, 34, 22);
-                    g.FillEllipse(bubbleBrush, bubbleRect);
-                    g.DrawEllipse(bubblePen, bubbleRect);
-                    using (Brush dot = new SolidBrush(Color.FromArgb(90, 90, 100))) {
-                        int dotY = bubbleRect.Top + bubbleRect.Height / 2 - 2;
-                        g.FillEllipse(dot, bubbleRect.Left + 6, dotY, 4, 4);
-                        g.FillEllipse(dot, bubbleRect.Left + 15, dotY, 4, 4);
-                        g.FillEllipse(dot, bubbleRect.Left + 24, dotY, 4, 4);
+                double visorAlpha = thinking ? (0.55 + 0.45 * Math.Sin(elapsedMs / 150.0)) : 1.0;
+                Rectangle visorRect = new Rectangle(headRect.Left + 4, headCenterY - 3, headW - 8, 6);
+                using (Brush visorBrush = new SolidBrush(Color.FromArgb((int)(255 * visorAlpha), glow))) {
+                    g.FillRectangle(visorBrush, visorRect);
+                }
+                using (Pen seg = new Pen(plateDark, 1f)) {
+                    int mid = visorRect.Left + visorRect.Width / 2;
+                    g.DrawLine(seg, mid, visorRect.Top, mid, visorRect.Bottom);
+                }
+
+                if (AntennaEnabled) {
+                    int antX = cx;
+                    int antTopY = headTopY - 10;
+                    using (Pen antPen = new Pen(plateDark, 2f)) {
+                        g.DrawLine(antPen, antX, headTopY, antX, antTopY);
+                    }
+                    double tipPulse = thinking ? (0.4 + 0.6 * (0.5 + 0.5 * Math.Sin(elapsedMs / 150.0))) : 1.0;
+                    using (Brush tip = new SolidBrush(Color.FromArgb((int)(255 * tipPulse), glow))) {
+                        g.FillEllipse(tip, antX - 3, antTopY - 3, 6, 6);
                     }
                 }
+            }
+
+            if (thinking) {
+                DrawThoughtBubble(g, cx + 20, headTopY - 4);
             }
         }
     }
@@ -176,28 +243,76 @@ function Get-EyesAvatarDefaultPoint {
     # Where the avatar shows up for actions with no on-screen target coordinates
     # (type_text, send_keys, focus_window, set_clipboard, task start/denial).
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    return @{ x = $screen.Right - 170; y = $screen.Bottom - 170 }
+    return @{ x = $screen.Right - 190; y = $screen.Bottom - 190 }
+}
+
+function ConvertFrom-EyesHexColor {
+    param([string]$Hex, [System.Drawing.Color]$FallbackColor)
+    try {
+        $h = $Hex.TrimStart('#')
+        if ($h.Length -eq 6) {
+            $r = [Convert]::ToInt32($h.Substring(0, 2), 16)
+            $g = [Convert]::ToInt32($h.Substring(2, 2), 16)
+            $b = [Convert]::ToInt32($h.Substring(4, 2), 16)
+            return [System.Drawing.Color]::FromArgb($r, $g, $b)
+        }
+    } catch {}
+    return $FallbackColor
+}
+
+function Get-EyesAvatarConfig {
+    # Customization source of truth: assets/avatar.config.json, read fresh on every call
+    # (each action is a separate process anyway) so edits apply immediately, no restart needed.
+    $cfg = @{
+        primaryColor   = "#4696FF"
+        accentColor    = "#FFD166"
+        antenna        = $true
+        shoulderLights = $true
+        chestCore      = $true
+    }
+    $path = Join-Path $PSScriptRoot "avatar.config.json"
+    if (Test-Path $path) {
+        try {
+            $raw = Get-Content -Raw -Path $path | ConvertFrom-Json
+            foreach ($k in @("primaryColor", "accentColor")) {
+                if ($raw.PSObject.Properties.Name -contains $k -and $raw.$k) { $cfg[$k] = $raw.$k }
+            }
+            foreach ($k in @("antenna", "shoulderLights", "chestCore")) {
+                if ($raw.PSObject.Properties.Name -contains $k) { $cfg[$k] = [bool]$raw.$k }
+            }
+        } catch {
+            # malformed config: fall back to defaults rather than failing the action
+        }
+    }
+    return $cfg
 }
 
 function Show-EyesAvatar {
     # state: thinking | acting | happy | denied
     param([int]$X, [int]$Y, [string]$State = "acting", [int]$DurationMs = 650)
 
-    # Width is wider than the character itself (cx is fixed at 45 in AvatarForm) to leave
-    # room for the thought bubble, which extends right of the body without clipping.
-    $w = 140; $h = 110
+    $cfg = Get-EyesAvatarConfig
+
+    # Width is wider than the character itself (cx is fixed at 60 in AvatarForm) to leave
+    # room for the thought bubble and outstretched arms without clipping.
+    $w = 170; $h = 150
     $form = New-Object ClaudeEyes.AvatarForm
     $form.FormBorderStyle = "None"
     $form.StartPosition = "Manual"
     $form.TopMost = $true
     $form.ShowInTaskbar = $false
     $form.Size = New-Object System.Drawing.Size($w, $h)
-    $form.Location = New-Object System.Drawing.Point(($X - 45), ($Y - ($h - 28)))
+    $form.Location = New-Object System.Drawing.Point(($X - 60), ($Y - ($h - 14)))
     $form.BackColor = [System.Drawing.Color]::Magenta
     $form.TransparencyKey = [System.Drawing.Color]::Magenta
     $form.State = $State
     $form.StartTicks = [DateTime]::Now.Ticks
     $form.TotalMs = $DurationMs
+    $form.PrimaryColor = ConvertFrom-EyesHexColor -Hex $cfg.primaryColor -FallbackColor ([System.Drawing.Color]::FromArgb(70, 160, 255))
+    $form.AccentColor = ConvertFrom-EyesHexColor -Hex $cfg.accentColor -FallbackColor ([System.Drawing.Color]::FromArgb(255, 209, 102))
+    $form.AntennaEnabled = [bool]$cfg.antenna
+    $form.ShoulderLightsEnabled = [bool]$cfg.shoulderLights
+    $form.ChestCoreEnabled = [bool]$cfg.chestCore
 
     $form.Show()
     $deadline = (Get-Date).AddMilliseconds($DurationMs)

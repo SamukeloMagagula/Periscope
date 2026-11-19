@@ -32,16 +32,37 @@ host).
 
 ### On-screen activity indicators
 
-- **Avatar.** A small glossy, animated character (gradient-shaded circle with a simple
-  face — no external image/3D assets, pure GDI+ drawing in `assets/lib.ps1`) appears at the
-  relevant screen location for every mutating action: "thinking" with a thought bubble right
-  before the confirm dialog, "acting" (focused expression) while the action executes, easing
-  into a brief "happy" smile at the end, or "denied" if you decline the confirm dialog. It
-  bobs and blinks continuously via wall-clock-driven animation (`AvatarForm.OnPaint`), and
-  appears at the action's target coordinates for `click`/`move_mouse`, or a fixed default spot
-  for actions with no on-screen target (`type_text`, `send_keys`, `focus_window`,
-  `set_clipboard`). It's a non-activating, layered window (`WS_EX_NOACTIVATE`), so it never
-  steals keyboard focus.
+- **Avatar.** A small mech character — head with a glowing visor, antenna, torso with a
+  pulsing chest core, and jointed arms/legs — appears at the relevant screen location for
+  every mutating action. No external image/3D assets: pure GDI+ drawing (`AvatarForm.OnPaint`
+  in `assets/lib.ps1`), self-animated from wall-clock time (idle leg sway, bob, pulsing
+  lights), so the PowerShell caller only has to `Invalidate()` on a timer. Pose/visor reflect
+  state: "thinking" (hand raised toward head, pulsing visor, thought bubble) right before the
+  confirm dialog, "acting" (reaching pose) while the action executes, easing into "happy"
+  (arms raised, visor steady) at the end, or "denied" (arms dropped, red visor) if you decline
+  the confirm dialog. Appears at the action's target coordinates for `click`/`move_mouse`, or
+  a fixed default spot for actions with no on-screen target (`type_text`, `send_keys`,
+  `focus_window`, `set_clipboard`). It's a non-activating, layered window
+  (`WS_EX_NOACTIVATE`), so it never steals keyboard focus.
+
+  **Customize it** by editing `assets/avatar.config.json` — no rebuild or restart needed, it's
+  read fresh on every action:
+
+  ```json
+  {
+    "primaryColor": "#4696FF",
+    "accentColor": "#FFD166",
+    "antenna": true,
+    "shoulderLights": true,
+    "chestCore": true
+  }
+  ```
+
+  `primaryColor`/`accentColor` are hex colors (body plating / visor & light glow — plating
+  color stays consistent across states, the glow color switches to red only for `denied` as a
+  universal error signal). The three booleans toggle the antenna, shoulder lights, and chest
+  core accessories independently. A malformed or missing file falls back to these defaults
+  rather than failing the action.
 - **Toast.** A short-lived text toast in a screen corner describing what ran. Shown for
   read-only actions and task start/end; skipped for actions that already show the avatar, to
   avoid redundant overlays and latency.
@@ -161,6 +182,7 @@ assets/lib.ps1       screen/mouse/keyboard/window/clipboard implementations; ava
 assets/run.ps1       dispatches -Action to the matching function; confirm dialog, avatar, toast,
                       and auto-task state checks happen here
 assets/hud.ps1       persistent always-on-top narration panel; tails the shared activity log
+assets/avatar.config.json  avatar colors/accessories - edit to customize, no rebuild needed
 assets/launcher.ps1  app picker; merges claude_desktop_config.json; launches Claude Desktop
 Launch Periscope.cmd shortcut to assets/launcher.ps1
 ```
