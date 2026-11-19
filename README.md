@@ -44,14 +44,16 @@ host).
 ### Bounded autonomous mode
 
 `start_task(description, minutes?)` / `end_task()` let multi-step work run without a
-confirmation prompt per action, inside a time-boxed, revocable window:
+confirmation prompt per action, inside a revocable window:
 
 - `start_task` pops one confirmation dialog for the whole task. If approved, mutating actions
   skip their individual prompts (still toasting/logging, tagged `[auto]`) until `end_task` is
-  called or the window expires (default 10 minutes, max 30, enforced server-side via an expiry
-  timestamp written to a state file).
-- The HUD shows the active task's description continuously, with its own **Stop** button —
-  an independent kill-switch that doesn't depend on the calling AI cooperating.
+  called. With no `minutes` argument the run is indefinite — there is no default timeout; pass
+  `minutes` to bound it instead. Either way, state is server-side (an expiry timestamp written
+  to a file), not something the calling AI can silently extend.
+- The HUD shows the active task's description continuously (flagged `(indefinite)` when
+  unbounded), with its own **Stop** button — an independent kill-switch that doesn't depend on
+  the calling AI cooperating or on ending the task itself.
 
 ## Setup
 
@@ -134,7 +136,7 @@ or run `Launch Periscope.cmd`. Opens a picker:
 | `focus_window` | yes | Restore (if minimized) and foreground a window by pid |
 | `get_clipboard` | no | Read clipboard text |
 | `set_clipboard` | yes | Write clipboard text |
-| `start_task` | yes (once) | Begin a bounded autonomous run; later mutating actions skip their own confirmation until `end_task` or timeout |
+| `start_task` | yes (once) | Begin an autonomous run (indefinite by default, or bounded via `minutes`); later mutating actions skip their own confirmation until `end_task` or timeout |
 | `end_task` | no | End the current autonomous run, restoring per-action confirmation |
 
 Typical usage: `screenshot` to observe state, compute target coordinates from the image, act

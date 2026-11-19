@@ -89,11 +89,12 @@ switch ($Action) {
         $result = Set-EyesClipboard -Text $p["text"]
     }
     "startTask" {
-        $minutes = if ($p.ContainsKey("minutes")) { [int]$p["minutes"] } else { 10 }
+        $minutes = if ($p.ContainsKey("minutes") -and $p["minutes"]) { [int]$p["minutes"] } else { $null }
         $desc = $p["description"]
-        Confirm-OrThrow -Message "Allow Periscope to run AUTONOMOUSLY for up to $minutes minute(s) without per-action confirmation?`n`nTask: $desc"
+        $durationText = if ($minutes) { "for up to $minutes minute(s)" } else { "indefinitely, until stopped" }
+        Confirm-OrThrow -Message "Allow Periscope to run AUTONOMOUSLY $durationText without per-action confirmation?`n`nTask: $desc"
         $result = Start-EyesAutoTask -Description $desc -Minutes $minutes
-        Write-EyesLog -Message "AUTO-TASK STARTED: $desc (up to $minutes min)"
+        Write-EyesLog -Message "AUTO-TASK STARTED: $desc ($durationText)"
         Show-EyesToast -Text "autonomous task started: $desc" -DurationMs 1800
     }
     "endTask" {

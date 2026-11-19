@@ -117,13 +117,15 @@ function Get-EyesTaskInfo {
 }
 
 function Start-EyesAutoTask {
-    param([string]$Description, [int]$Minutes = 10)
-    if ($Minutes -gt 30) { $Minutes = 30 }
-    if ($Minutes -lt 1) { $Minutes = 1 }
-    $expiry = (Get-Date).AddMinutes($Minutes).ToString("o")
-    @{ description = $Description; expiry = $expiry } | ConvertTo-Json -Compress |
+    # $Minutes = $null (or 0) means indefinite: runs until Stop-EyesAutoTask is called
+    # (via end_task or the HUD's Stop button), matching an "always-on until dismissed" model.
+    param([string]$Description, [Nullable[int]]$Minutes = $null)
+    if ($Minutes -and $Minutes -lt 1) { $Minutes = 1 }
+    $indefinite = -not $Minutes
+    $expiry = if ($indefinite) { [DateTime]::MaxValue.ToString("o") } else { (Get-Date).AddMinutes($Minutes).ToString("o") }
+    @{ description = $Description; expiry = $expiry; indefinite = $indefinite } | ConvertTo-Json -Compress |
         Out-File -Encoding utf8 -FilePath $EyesTaskPath
-    return @{ started = $true; description = $Description; expiry = $expiry }
+    return @{ started = $true; description = $Description; expiry = $expiry; indefinite = $indefinite }
 }
 
 function Stop-EyesAutoTask {

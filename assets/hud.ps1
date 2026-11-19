@@ -97,7 +97,8 @@ $timer.Add_Tick({
 
         if (Test-EyesAutoTaskActive) {
             $info = Get-EyesTaskInfo
-            $status.Text = "*  AUTO: $($info.description)"
+            $durationTag = if ($info.indefinite) { " (indefinite)" } else { "" }
+            $status.Text = "*  AUTO: $($info.description)$durationTag"
             $status.ForeColor = [System.Drawing.Color]::FromArgb(120, 220, 140)
             $stopBtn.Visible = $true
         } else {

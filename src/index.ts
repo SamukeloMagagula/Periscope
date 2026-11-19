@@ -213,14 +213,17 @@ server.registerTool(
   {
     title: "Start an autonomous task",
     description:
-      "Begin a bounded autonomous run: pops ONE confirmation dialog describing the task, and if approved, " +
-      "subsequent mutating actions (click, type_text, send_keys, move_mouse, focus_window, set_clipboard) skip " +
-      "their individual confirmation prompts until end_task is called or the time limit expires. The HUD panel " +
-      "shows the task is active with a one-click Stop button the whole time. Use this for multi-step work the " +
-      "user has already approved at a high level; always call end_task when done.",
+      "Begin an autonomous run: pops ONE confirmation dialog describing the task, and if approved, subsequent " +
+      "mutating actions (click, type_text, send_keys, move_mouse, focus_window, set_clipboard) skip their " +
+      "individual confirmation prompts until end_task is called or (if a duration was given) the time limit " +
+      "expires. With no 'minutes' argument this runs indefinitely, until end_task is called or the user hits " +
+      "Stop on the HUD panel — there is no default timeout. The HUD panel shows the task is active with a " +
+      "one-click Stop button the whole time, as an independent kill-switch. Use this for multi-step work the " +
+      "user has already approved at a high level; always call end_task when the task is actually done, even " +
+      "if running indefinitely, rather than leaving it open.",
     inputSchema: {
       description: z.string().describe("Plain-English description of what you're about to do, shown in the confirmation dialog and the HUD."),
-      minutes: z.number().int().min(1).max(30).optional().describe("How long the autonomous window stays open (default 10, max 30)."),
+      minutes: z.number().int().min(1).optional().describe("Optional time limit in minutes. Omit for an indefinite run (until end_task or the HUD Stop button)."),
     },
   },
   async ({ description, minutes }) => callAction("startTask", { description, minutes })
