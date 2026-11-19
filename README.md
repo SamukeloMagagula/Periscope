@@ -9,10 +9,10 @@ input, window enumeration/focus, and clipboard read/write.
 It's a [Model Context Protocol](https://modelcontextprotocol.io) server, split into two parts:
 
 - **`assets/host.ps1`** — a persistent background process you start once (by double-clicking a
-  desktop icon). It hosts a named pipe server, the activity HUD, and a clickable idle avatar,
-  and performs every actual screen/mouse/keyboard/window/clipboard action in-process. All the
-  .NET types (`System.Drawing`, `System.Windows.Forms`, raw Win32 P/Invoke into `user32.dll`)
-  compile once at startup, not per action.
+  desktop icon). It hosts a named pipe server, a localhost web dashboard, a system tray icon,
+  and a clickable idle avatar, and performs every actual screen/mouse/keyboard/window/clipboard
+  action in-process. All the .NET types (`System.Drawing`, `System.Windows.Forms`, raw Win32
+  P/Invoke into `user32.dll`) compile once at startup, not per action.
 - **`src/index.ts`** (the MCP server, `dist/index.js`) — a thin Node client. Each tool call
   opens a connection to the host's named pipe (`\\.\pipe\PeriscopeActionPipe`), sends a JSON
   request, and reads back a JSON response. It spawns no processes and owns no GUI itself.
@@ -40,7 +40,8 @@ This builds `dist/index.js` and creates a **Periscope** shortcut on your Desktop
 
 1. **Double-click the Periscope desktop icon.** This starts `host.ps1` in the background (no
    visible console window) and shows a small idle robot avatar in the middle of your screen —
-   that's your confirmation it's running. The activity HUD panel also appears, top-right.
+   that's your confirmation it's running. A Periscope icon also appears in the system tray
+   (bottom-right of the taskbar).
 2. **Click the robot.** It opens a picker: launch Claude Desktop (configured automatically to
    use Periscope) or open claude.ai in a browser. The robot then hides, and only reappears
    briefly during actual actions from here on.
@@ -51,9 +52,14 @@ This builds `dist/index.js` and creates a **Periscope** shortcut on your Desktop
 Re-run `npm run install-shortcut` any time (e.g. after moving the folder) to refresh the
 shortcut; it's safe to run repeatedly.
 
-**To stop Periscope**, close the "Periscope - Activity" HUD panel — that shuts down the whole
-background process (pipe server, idle avatar, everything). Double-click the desktop icon again
-to start it back up.
+**To see what Periscope is doing**, open **http://localhost:51823/** in any browser (or
+right-click the tray icon → "Open activity dashboard") — a live, auto-refreshing log of every
+action, plus the current autonomous-task status with a stop button. No window to keep open or
+accidentally close; just a page you visit when you want it.
+
+**To stop Periscope**, right-click the tray icon and choose **Exit Periscope** — the one
+reliable way to shut down the whole background process (pipe server, dashboard, idle avatar,
+everything). Double-click the desktop icon again to start it back up.
 
 ### Wiring up an MCP client
 
@@ -117,9 +123,9 @@ on the host).
 
   **Customize it** by editing `assets/avatar.config.json`. The transient per-action avatar
   (above) reads it fresh before every popup — no rebuild, no restart. The persistent idle robot
-  reads it once when `host.ps1` starts, so it needs the host process restarted (close it and
-  double-click the desktop icon again — a second double-click while it's already running just
-  reopens the picker, it won't restart it) to pick up a config change:
+  reads it once when `host.ps1` starts, so it needs the host restarted (Exit from the tray
+  icon, then double-click the desktop icon again — a second double-click while it's already
+  running just reopens the picker, it won't restart it) to pick up a config change:
 
   ```json
   {
@@ -139,8 +145,11 @@ on the host).
 - **Toast.** A short-lived text toast in a screen corner describing what ran. Shown for
   read-only actions and task start/end; skipped for actions that already show the avatar, to
   avoid redundant overlays and latency.
-- **HUD.** A persistent, always-on-top panel, part of `host.ps1`, showing a running history of
-  every action and the current autonomous-task status with a one-click stop button.
+- **Dashboard.** A localhost web page (**http://localhost:51823/**, see "Getting started"
+  above), served by `host.ps1` itself via `System.Net.HttpListener` (no admin rights needed —
+  the `localhost` prefix doesn't require a URL ACL reservation like a wildcard binding would).
+  Deliberately not a floating always-on-top window: open it when you want to look, close the
+  tab when you don't, no extra window cluttering your desktop or getting in the way.
 
 ### Bounded autonomous mode
 
@@ -152,7 +161,7 @@ confirmation prompt per action, inside a revocable window:
   called. With no `minutes` argument the run is indefinite — there is no default timeout; pass
   `minutes` to bound it instead. State lives in `host.ps1`'s process (an expiry timestamp
   written to a file), not something the calling AI can silently extend.
-- The HUD shows the active task's description continuously (flagged `(indefinite)` when
+- The dashboard shows the active task's description continuously (flagged `(indefinite)` when
   unbounded), with its own **Stop** button — an independent kill-switch that doesn't depend on
   the calling AI cooperating or on ending the task itself.
 
@@ -182,10 +191,11 @@ with `click`/`type_text`/`send_keys`, `screenshot` again to verify the result.
 src/index.ts          MCP server: tool schemas (zod), dispatch to powershell.ts
 src/powershell.ts      named-pipe client - connects to host.ps1, no process spawning
 assets/host.ps1        the persistent background process (started via the desktop icon):
-                        named pipe server, HUD, idle/clickable avatar, main event loop
+                        named pipe server, HTTP dashboard, tray icon, idle/clickable avatar,
+                        global exception handler, main event loop
 assets/dispatch.ps1    Invoke-EyesAction: the switch that maps an action name to its
-                        implementation, confirm dialog, avatar, and HUD logging - shared by
-                        host.ps1 and the standalone run.ps1
+                        implementation, confirm dialog, avatar, and activity logging - shared
+                        by host.ps1 and the standalone run.ps1
 assets/lib.ps1         screen/mouse/keyboard/window/clipboard implementations; avatar/toast
                         overlays; shared activity-log and autonomous-task state helpers
 assets/run.ps1         standalone single-action runner for manual testing (not used by the
@@ -193,8 +203,8 @@ assets/run.ps1         standalone single-action runner for manual testing (not u
 assets/launcher-lib.ps1  Show-EyesLauncherPicker: the Claude Desktop / claude.ai picker,
                         used by both launcher.ps1 and the idle avatar's click handler
 assets/launcher.ps1    standalone entry point for the picker (npm run launch)
-assets/hud-lib.ps1      New-EyesHudForm: builds the activity panel, used by host.ps1 and hud.ps1
-assets/hud.ps1         standalone HUD (npm run hud), only needed if you want it separately
+assets/dashboard-lib.ps1  the localhost dashboard: HTML/JS page plus the HTTP request handler
+                        (GET /, /api/log, /api/status, POST /api/task/stop)
 assets/install-shortcut.ps1  creates/refreshes the Desktop shortcut to host.ps1
 assets/avatar.config.json  avatar colors/accessories - edit to customize, no rebuild needed
 Launch Periscope.cmd   shortcut to assets/launcher.ps1 (the picker alone, without the host)
@@ -208,6 +218,19 @@ To exercise an action without an MCP client or the host process, with `host.ps1`
 '{"outPath":"C:\\path\\to\\test.png"}' | Out-File -Encoding utf8 "$env:TEMP\params.json"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File assets\run.ps1 -Action screenshot -ParamsFile "$env:TEMP\params.json"
 ```
+
+## Stability
+
+`host.ps1` sets `[System.Windows.Forms.Application]::SetUnhandledExceptionMode(CatchException)`
+and a global `ThreadException` handler before showing anything: if a bug throws inside a
+WinForms event handler, it's logged (visible on the dashboard) instead of popping the native
+"Unhandled exception has occurred in a component in your application" crash dialog, which
+otherwise blocks all interaction until dismissed — and can reappear if the same handler fires
+again (this happened during development: a `Timer.Add_Tick` handler referenced a now-defunct
+HUD panel's local variable and crashed exactly this way; the handler is gone and the broader
+fix now catches this class of bug generically). Non-UI errors in the main loop (pipe handling,
+the dashboard's HTTP requests) are also caught and logged per-iteration rather than killing the
+whole process.
 
 ## Known limitations
 
