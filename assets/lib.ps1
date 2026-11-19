@@ -17,6 +17,7 @@ Add-Type -Namespace ClaudeEyes -Name Native -MemberDefinition @"
 [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
 [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 [StructLayout(LayoutKind.Sequential)]
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 "@
@@ -329,6 +330,19 @@ function Write-EyesLog {
     param([string]$Message)
     $entry = @{ ts = (Get-Date).ToString("o"); message = $Message } | ConvertTo-Json -Compress
     Add-Content -Path $EyesLogPath -Value $entry -Encoding utf8
+}
+
+function Hide-EyesConsoleWindow {
+    # Hides THIS process's own console window via a direct Win32 call, as opposed to
+    # launching powershell.exe with -WindowStyle Hidden (which was found to also suppress
+    # GUI windows created later in the same process - not just the console) or a shortcut's
+    # WindowStyle=Minimized (which causes windows shown afterward to inherit a minimized
+    # state). Calling this after the console exists but before showing any Forms gives a
+    # clean console-free start without affecting the HUD/avatar windows at all.
+    $hwnd = [ClaudeEyes.Native]::GetConsoleWindow()
+    if ($hwnd -ne [IntPtr]::Zero) {
+        [ClaudeEyes.Native]::ShowWindowAsync($hwnd, 0) | Out-Null  # SW_HIDE
+    }
 }
 
 function Test-EyesAutoTaskActive {

@@ -6,15 +6,82 @@ input, window enumeration/focus, and clipboard read/write.
 
 ## How it works
 
-It's a [Model Context Protocol](https://modelcontextprotocol.io) server. The Node/TypeScript
-layer (`src/`) only validates tool input and shells out to `powershell.exe`; the actual screen,
-input and window control is implemented in `.NET` (`System.Drawing`, `System.Windows.Forms`)
-and raw Win32 P/Invoke (`user32.dll`) from PowerShell (`assets/`). There are no native Node
-addons to compile, so it has no node-gyp/prebuild/ABI dependency on the Node version in use.
+It's a [Model Context Protocol](https://modelcontextprotocol.io) server, split into two parts:
 
-Each tool call spawns a fresh `powershell.exe assets/run.ps1 -Action <name> -ParamsFile <path>`
-process, which dot-sources `assets/lib.ps1` for the actual implementations and prints a single
-JSON object to stdout that the Node side parses.
+- **`assets/host.ps1`** — a persistent background process you start once (by double-clicking a
+  desktop icon). It hosts a named pipe server, the activity HUD, and a clickable idle avatar,
+  and performs every actual screen/mouse/keyboard/window/clipboard action in-process. All the
+  .NET types (`System.Drawing`, `System.Windows.Forms`, raw Win32 P/Invoke into `user32.dll`)
+  compile once at startup, not per action.
+- **`src/index.ts`** (the MCP server, `dist/index.js`) — a thin Node client. Each tool call
+  opens a connection to the host's named pipe (`\\.\pipe\PeriscopeActionPipe`), sends a JSON
+  request, and reads back a JSON response. It spawns no processes and owns no GUI itself.
+
+This two-process design exists specifically so an MCP tool call is fast and lightweight: it's a
+local IPC round-trip (tens of milliseconds for read-only calls) instead of spawning a fresh
+`powershell.exe` per action, which matters on a resource-constrained machine — spawning a new
+process and recompiling the .NET types in it from scratch previously cost roughly 0.5-2s
+*before* the actual action even ran. If `host.ps1` isn't running, tool calls fail fast with a
+clear message telling you to start it, rather than silently doing nothing or auto-spawning
+background processes on your behalf.
+
+There are no native Node addons anywhere in this stack, so it has no node-gyp/prebuild/ABI
+dependency on the Node version in use.
+
+## Getting started
+
+```sh
+npm install
+npm run build
+npm run install-shortcut
+```
+
+This builds `dist/index.js` and creates a **Periscope** shortcut on your Desktop.
+
+1. **Double-click the Periscope desktop icon.** This starts `host.ps1` in the background (no
+   visible console window) and shows a small idle robot avatar in the middle of your screen —
+   that's your confirmation it's running. The activity HUD panel also appears, top-right.
+2. **Click the robot.** It opens a picker: launch Claude Desktop (configured automatically to
+   use Periscope) or open claude.ai in a browser. The robot then hides, and only reappears
+   briefly during actual actions from here on.
+3. **Prompt Claude/Copilot as normal.** Tool calls connect to the running host over the named
+   pipe. If you ask it to do something before starting the host, you'll get a clear error
+   telling you to double-click the icon first.
+
+Re-run `npm run install-shortcut` any time (e.g. after moving the folder) to refresh the
+shortcut; it's safe to run repeatedly.
+
+**To stop Periscope**, close the "Periscope - Activity" HUD panel — that shuts down the whole
+background process (pipe server, idle avatar, everything). Double-click the desktop icon again
+to start it back up.
+
+### Wiring up an MCP client
+
+**Claude Code**: `.mcp.json` at the repo root points at `dist/index.js` using a path relative to
+the project root, so cloning anywhere and running `claude` from the repo directory picks it up
+automatically.
+
+**Claude Desktop**: the robot's picker (above) does this for you. To do it by hand instead, add
+to `%APPDATA%\Claude\claude_desktop_config.json` (replace the path with your clone location),
+then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "periscope": {
+      "command": "node",
+      "args": ["<absolute-path-to-repo>\\dist\\index.js"]
+    }
+  }
+}
+```
+
+**GitHub Copilot (VS Code)**: add the same shape to `.vscode/mcp.json` (workspace) or the user
+MCP config, under `"servers"` instead of `"mcpServers"`, then enable via `MCP: List Servers` or
+the Copilot Chat tools picker.
+
+None of these need `host.ps1` itself configured anywhere — it's independent of the MCP client
+and just needs to be running (step 1 above) before tool calls will succeed.
 
 ## Safety model
 
@@ -26,9 +93,9 @@ until approved.
 Read-only actions (`screenshot`, `list_screens`, `list_windows`, `get_clipboard`) run without a
 prompt.
 
-Set `PERISCOPE_CONFIRM=0` in the server's environment to disable confirmation prompts entirely
-(not recommended — removes the only hard gate between an AI's decision and an action on the
-host).
+Set `PERISCOPE_CONFIRM=0` in the MCP server's environment to disable confirmation prompts
+entirely (not recommended — removes the only hard gate between an AI's decision and an action
+on the host).
 
 ### On-screen activity indicators
 
@@ -36,17 +103,23 @@ host).
   pulsing chest core, and jointed arms/legs — appears at the relevant screen location for
   every mutating action. No external image/3D assets: pure GDI+ drawing (`AvatarForm.OnPaint`
   in `assets/lib.ps1`), self-animated from wall-clock time (idle leg sway, bob, pulsing
-  lights), so the PowerShell caller only has to `Invalidate()` on a timer. Pose/visor reflect
-  state: "thinking" (hand raised toward head, pulsing visor, thought bubble) right before the
-  confirm dialog, "acting" (reaching pose) while the action executes, easing into "happy"
-  (arms raised, visor steady) at the end, or "denied" (arms dropped, red visor) if you decline
-  the confirm dialog. Appears at the action's target coordinates for `click`/`move_mouse`, or
-  a fixed default spot for actions with no on-screen target (`type_text`, `send_keys`,
-  `focus_window`, `set_clipboard`). It's a non-activating, layered window
-  (`WS_EX_NOACTIVATE`), so it never steals keyboard focus.
+  lights). Pose/visor reflect state: "thinking" (hand raised toward head, pulsing visor,
+  thought bubble) right before the confirm dialog, "acting" (reaching pose) while the action
+  executes, easing into "happy" (arms raised, visor steady) at the end, or "denied" (arms
+  dropped, red visor) if you decline the confirm dialog. Appears at the action's target
+  coordinates for `click`/`move_mouse`, or a fixed default spot for actions with no on-screen
+  target (`type_text`, `send_keys`, `focus_window`, `set_clipboard`). It's a non-activating,
+  layered window (`WS_EX_NOACTIVATE`), so it never steals keyboard focus.
 
-  **Customize it** by editing `assets/avatar.config.json` — no rebuild or restart needed, it's
-  read fresh on every action:
+  The same character, in a persistent idle pose, is also the "is Periscope running" indicator
+  and app launcher described above — click it any time to reopen the Claude Desktop/claude.ai
+  picker.
+
+  **Customize it** by editing `assets/avatar.config.json`. The transient per-action avatar
+  (above) reads it fresh before every popup — no rebuild, no restart. The persistent idle robot
+  reads it once when `host.ps1` starts, so it needs the host process restarted (close it and
+  double-click the desktop icon again — a second double-click while it's already running just
+  reopens the picker, it won't restart it) to pick up a config change:
 
   ```json
   {
@@ -66,10 +139,8 @@ host).
 - **Toast.** A short-lived text toast in a screen corner describing what ran. Shown for
   read-only actions and task start/end; skipped for actions that already show the avatar, to
   avoid redundant overlays and latency.
-- **HUD.** `assets/hud.ps1` is a persistent, single-instance (named mutex), always-on-top
-  panel that tails a shared activity log and shows a running history of all actions. The MCP
-  server spawns it automatically on startup; run it manually with `npm run hud` if it's been
-  closed.
+- **HUD.** A persistent, always-on-top panel, part of `host.ps1`, showing a running history of
+  every action and the current autonomous-task status with a one-click stop button.
 
 ### Bounded autonomous mode
 
@@ -79,78 +150,11 @@ confirmation prompt per action, inside a revocable window:
 - `start_task` pops one confirmation dialog for the whole task. If approved, mutating actions
   skip their individual prompts (still toasting/logging, tagged `[auto]`) until `end_task` is
   called. With no `minutes` argument the run is indefinite — there is no default timeout; pass
-  `minutes` to bound it instead. Either way, state is server-side (an expiry timestamp written
-  to a file), not something the calling AI can silently extend.
+  `minutes` to bound it instead. State lives in `host.ps1`'s process (an expiry timestamp
+  written to a file), not something the calling AI can silently extend.
 - The HUD shows the active task's description continuously (flagged `(indefinite)` when
   unbounded), with its own **Stop** button — an independent kill-switch that doesn't depend on
   the calling AI cooperating or on ending the task itself.
-
-## Setup
-
-```sh
-npm install
-npm run build
-```
-
-Produces `dist/index.js`, the server entry point (stdio transport).
-
-### Claude Code
-
-`.mcp.json` at the repo root points at `dist/index.js` using a path relative to the project
-root, so cloning anywhere and running `claude` from the repo directory picks it up
-automatically — no edits needed.
-
-### Claude Desktop
-
-Claude Desktop spawns MCP servers from its own working directory, so it needs an absolute
-path. Add to `%APPDATA%\Claude\claude_desktop_config.json`, replacing the path with your clone
-location:
-
-```json
-{
-  "mcpServers": {
-    "periscope": {
-      "command": "node",
-      "args": ["<absolute-path-to-repo>\\dist\\index.js"]
-    }
-  }
-}
-```
-
-Restart Claude Desktop afterward — MCP clients only read their config at startup.
-
-### GitHub Copilot (VS Code)
-
-Add to `.vscode/mcp.json` (workspace) or the user MCP config:
-
-```json
-{
-  "servers": {
-    "periscope": {
-      "command": "node",
-      "args": ["<absolute-path-to-repo>\\dist\\index.js"]
-    }
-  }
-}
-```
-
-Enable via the `MCP: List Servers` command or the Copilot Chat tools picker.
-
-### Launcher
-
-```sh
-npm run launch
-```
-
-or run `Launch Periscope.cmd`. Opens a picker:
-
-- **Launch Claude Desktop** — merges a `periscope` entry into
-  `%APPDATA%\Claude\claude_desktop_config.json` (backs up the existing file to `.bak` first,
-  preserving any other configured servers), then starts Claude Desktop. Reports clearly if
-  Claude Desktop isn't installed rather than failing silently.
-- **Open claude.ai in browser** — opens the site for a plain chat session. claude.ai's web UI
-  only supports remote HTTPS+OAuth MCP connectors, not a local stdio process, so this path gets
-  no device control; the picker states this before opening the browser.
 
 ## Tools
 
@@ -175,21 +179,41 @@ with `click`/`type_text`/`send_keys`, `screenshot` again to verify the result.
 ## Project layout
 
 ```
-src/index.ts        MCP server: tool schemas (zod), dispatch to powershell.ts, HUD auto-spawn
-src/powershell.ts    spawns assets/run.ps1 per action, parses its JSON stdout
-assets/lib.ps1       screen/mouse/keyboard/window/clipboard implementations; avatar and toast
-                      overlays; shared activity-log and autonomous-task state helpers
-assets/run.ps1       dispatches -Action to the matching function; confirm dialog, avatar, toast,
-                      and auto-task state checks happen here
-assets/hud.ps1       persistent always-on-top narration panel; tails the shared activity log
+src/index.ts          MCP server: tool schemas (zod), dispatch to powershell.ts
+src/powershell.ts      named-pipe client - connects to host.ps1, no process spawning
+assets/host.ps1        the persistent background process (started via the desktop icon):
+                        named pipe server, HUD, idle/clickable avatar, main event loop
+assets/dispatch.ps1    Invoke-EyesAction: the switch that maps an action name to its
+                        implementation, confirm dialog, avatar, and HUD logging - shared by
+                        host.ps1 and the standalone run.ps1
+assets/lib.ps1         screen/mouse/keyboard/window/clipboard implementations; avatar/toast
+                        overlays; shared activity-log and autonomous-task state helpers
+assets/run.ps1         standalone single-action runner for manual testing (not used by the
+                        live MCP server - see "Quick manual test" below)
+assets/launcher-lib.ps1  Show-EyesLauncherPicker: the Claude Desktop / claude.ai picker,
+                        used by both launcher.ps1 and the idle avatar's click handler
+assets/launcher.ps1    standalone entry point for the picker (npm run launch)
+assets/hud-lib.ps1      New-EyesHudForm: builds the activity panel, used by host.ps1 and hud.ps1
+assets/hud.ps1         standalone HUD (npm run hud), only needed if you want it separately
+assets/install-shortcut.ps1  creates/refreshes the Desktop shortcut to host.ps1
 assets/avatar.config.json  avatar colors/accessories - edit to customize, no rebuild needed
-assets/launcher.ps1  app picker; merges claude_desktop_config.json; launches Claude Desktop
-Launch Periscope.cmd shortcut to assets/launcher.ps1
+Launch Periscope.cmd   shortcut to assets/launcher.ps1 (the picker alone, without the host)
+```
+
+### Quick manual test
+
+To exercise an action without an MCP client or the host process, with `host.ps1` NOT running:
+
+```powershell
+'{"outPath":"C:\\path\\to\\test.png"}' | Out-File -Encoding utf8 "$env:TEMP\params.json"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File assets\run.ps1 -Action screenshot -ParamsFile "$env:TEMP\params.json"
 ```
 
 ## Known limitations
 
-- Windows only; depends on `powershell.exe`, .NET WinForms, and Win32 user32.dll.
+- Windows only; depends on `powershell.exe`, .NET WinForms, and Win32 user32.dll/kernel32.dll.
+- Requires `host.ps1` to be running (via the desktop icon) for the MCP server to do anything;
+  it does not auto-start it.
 - `click`/`move_mouse` take absolute coordinates across the full virtual desktop (origin at the
   primary monitor's top-left corner; secondary monitors can have negative or beyond-primary-width
   coordinates — use `list_screens` for each monitor's offset).
@@ -197,11 +221,9 @@ Launch Periscope.cmd shortcut to assets/launcher.ps1
   `focus_window` or `click` on the target first.
 - No OCR or UI-element detection — the calling model reads the screenshot image directly to
   compute click targets.
-- Each action spawns a new `powershell.exe` process; expect roughly 0.5-1s of fixed overhead
-  per call before the action itself runs, plus another ~1-1.5s for mutating actions while the
-  avatar's thinking/acting animation plays (not counting time spent waiting on the confirm
-  dialog itself). Set `PERISCOPE_CONFIRM=0` only reduces the confirm-dialog wait, not the
-  avatar animation time.
+- Mutating actions still take roughly 0.5-1.5s for the avatar's thinking/acting animation to
+  play out (not counting time spent waiting on the confirm dialog itself) — this is deliberate
+  visual feedback, not fixed process overhead like before.
 
 ## License
 

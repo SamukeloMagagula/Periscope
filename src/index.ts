@@ -4,25 +4,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { runAction, ActionDeniedError } from "./powershell.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-// Best-effort: pop the live narration HUD so there's always an on-screen log of activity.
-// hud.ps1 is single-instance (named mutex), so repeated server starts are harmless.
-try {
-  const hud = spawn(
-    "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(__dirname, "..", "assets", "hud.ps1")],
-    { detached: true, stdio: "ignore", windowsHide: true }
-  );
-  hud.unref();
-} catch {
-  // non-critical; the server still works without the HUD
-}
+// This server itself does no process spawning and owns no GUI - it's a thin client over the
+// named pipe that assets/host.ps1 (the persistent background process, launched via the
+// desktop icon) serves. If host.ps1 isn't running, runAction's errors say so clearly.
 
 const CONFIRM_DISABLED = process.env.PERISCOPE_CONFIRM === "0";
 

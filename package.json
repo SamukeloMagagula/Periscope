@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "launch": "powershell -NoProfile -ExecutionPolicy Bypass -File assets/launcher.ps1",
-    "hud": "powershell -NoProfile -ExecutionPolicy Bypass -File assets/hud.ps1"
+    "hud": "powershell -NoProfile -ExecutionPolicy Bypass -File assets/hud.ps1",
+    "host": "powershell -NoProfile -ExecutionPolicy Bypass -File assets/host.ps1",
+    "install-shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File assets/install-shortcut.ps1"
   },
   "keywords": [],
   "author": "",
