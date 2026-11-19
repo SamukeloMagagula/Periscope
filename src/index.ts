@@ -5,7 +5,7 @@ import { z } from "zod";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAction, ActionDeniedError } from "./powershell.js";
+import { runAction, ActionDeniedError } from "./pipe-client.js";
 
 // This server itself does no process spawning and owns no GUI - it's a thin client over the
 // named pipe that assets/host.ps1 (the persistent background process, launched via the

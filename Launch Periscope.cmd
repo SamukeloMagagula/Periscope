@@ -1,2 +1,2 @@
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0assets\launcher.ps1"
+pythonw "%~dp0python\launcher.py"

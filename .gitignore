@@ -1,6 +1,9 @@
 node_modules/
 dist/
 *.log
+__pycache__/
+*.pyc
+python/test-*.py
 .env
 .env.*
 *.png

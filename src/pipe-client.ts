@@ -35,7 +35,13 @@ export async function runAction(action: string, params: Record<string, unknown> 
       buffer += chunk.toString("utf8");
       if (!buffer.includes("\n")) return;
       finish(() => {
-        socket.end();
+        // destroy(), not end(): end() only half-closes the write side, leaving the read side
+        // open - when the server then disconnects its end of the pipe, that lingering read
+        // surfaces as a trailing EPIPE "error" event that (found via live testing) crashed the
+        // whole process as an uncaught exception despite the error listener below being
+        // registered. destroy() tears down both directions immediately, so there's nothing
+        // left open for that trailing event to fire on.
+        socket.destroy();
         const line = buffer.split("\n")[0].trim();
         let parsed: { ok: boolean; result?: unknown; error?: string; denied?: boolean };
         try {
