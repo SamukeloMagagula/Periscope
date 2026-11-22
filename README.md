@@ -286,6 +286,18 @@ Launch Periscope.cmd    shortcut to python/launcher.py (the picker alone, withou
   determined adversary — a process renamed/repackaged under a different executable name won't
   match the blocklist.
 
+### Idle resource use
+
+The idle robot redraws at 10fps (vs ~33fps for the brief per-action popups) — plenty smooth
+for a mostly-still background character, and it's the one thing in this stack that redraws for
+as long as `host.py` is running, so its rate matters more than a transient animation's does.
+`avatar.config.json`/`scope.config.json` are cached by file modification time, so an action
+that doesn't touch either doesn't pay for a disk read + JSON parse it doesn't need; an edit to
+either file still takes effect on the very next check. The activity log (which the dashboard
+polls every second while open) is read incrementally — only the bytes written since the last
+read, not the whole file — so dashboard polling doesn't get slower as a long-running session's
+log grows.
+
 ## License
 
 [MIT](LICENSE)

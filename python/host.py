@@ -171,7 +171,10 @@ else:
     idle_x, idle_y = root.winfo_screenwidth() // 2, root.winfo_screenheight() // 2
 
 _idle_cfg = state.get_avatar_config()
-idle_avatar = avatar.AvatarWindow(root, idle_x, idle_y, state="idle", duration_ms=10**9, cfg=_idle_cfg)
+idle_avatar = avatar.AvatarWindow(
+    root, idle_x, idle_y, state="idle", duration_ms=10**9, cfg=_idle_cfg, tick_ms=100
+)  # 10fps instead of ~33fps - this one redraws for as long as host.py runs, unlike the
+   # transient per-action popups, so its redraw rate matters for idle CPU use
 idle_avatar.win.config(cursor="hand2")
 
 _drag = {"dragging": False, "moved": False, "start_mouse": None, "start_win": None}

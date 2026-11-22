@@ -7,6 +7,7 @@ rewrite.
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -38,21 +39,50 @@ def write_log(message: str) -> None:
         f.write(json.dumps(entry) + "\n")
 
 
+_log_cache_lock = threading.Lock()
+_log_cache = {"offset": 0, "entries": [], "partial": ""}
+
+
 def read_log_tail(n: int = 300):
+    # Incremental: the log file is never rotated/truncated, so on a long-running host it only
+    # grows. Re-reading and re-parsing the whole thing on every dashboard poll (every ~1s while
+    # a tab is open) gets slower the longer the session runs for no reason - only the bytes
+    # written since the last call are new. Guarded by a lock since the dashboard's
+    # ThreadingHTTPServer can call this from multiple request threads concurrently.
     if not LOG_PATH.exists():
+        with _log_cache_lock:
+            _log_cache.update(offset=0, entries=[], partial="")
         return []
-    entries = []
-    with open(LOG_PATH, "r", encoding="utf-8") as f:
-        lines = f.readlines()[-n:]
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+
+    with _log_cache_lock:
         try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return entries
+            size = LOG_PATH.stat().st_size
+        except OSError:
+            return list(_log_cache["entries"][-n:])
+
+        if size < _log_cache["offset"]:
+            _log_cache.update(offset=0, entries=[], partial="")
+
+        if size > _log_cache["offset"]:
+            with open(LOG_PATH, "rb") as f:
+                f.seek(_log_cache["offset"])
+                chunk = f.read()
+            _log_cache["offset"] += len(chunk)
+            text = _log_cache["partial"] + chunk.decode("utf-8", errors="replace")
+            lines = text.split("\n")
+            _log_cache["partial"] = lines[-1]
+            for line in lines[:-1]:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    _log_cache["entries"].append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+            if len(_log_cache["entries"]) > n:
+                _log_cache["entries"] = _log_cache["entries"][-n:]
+
+        return list(_log_cache["entries"][-n:])
 
 
 def is_auto_task_active() -> bool:
@@ -126,34 +156,59 @@ def save_avatar_position(x: int, y: int):
         json.dump({"x": x, "y": y}, f)
 
 
-def get_avatar_config():
-    cfg = dict(DEFAULT_AVATAR_CONFIG)
-    if AVATAR_CONFIG_PATH.exists():
+_config_cache_lock = threading.Lock()
+_config_cache: dict = {}  # path -> {"mtime": float, "value": dict}
+
+
+def _load_config_cached(path: Path, default: dict, parse_fn):
+    # avatar.config.json / scope.config.json are read before every single avatar popup / scope
+    # check so edits apply immediately with no restart - but re-reading and re-parsing JSON on
+    # every action when the file hasn't changed since the last check is wasted work. An mtime
+    # check (cheap: one stat() syscall) skips the actual read+parse when nothing changed, while
+    # still picking up edits as soon as the file's mtime moves.
+    with _config_cache_lock:
+        if not path.exists():
+            return dict(default)
         try:
-            with open(AVATAR_CONFIG_PATH, "r", encoding="utf-8") as f:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return dict(default)
+
+        cached = _config_cache.get(path)
+        if cached and cached["mtime"] == mtime:
+            return dict(cached["value"])
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-            for key in ("primaryColor", "accentColor"):
-                if raw.get(key):
-                    cfg[key] = raw[key]
-            for key in ("antenna", "shoulderLights", "chestCore"):
-                if key in raw:
-                    cfg[key] = bool(raw[key])
+            value = parse_fn(raw)
         except (OSError, json.JSONDecodeError):
-            pass
-    return cfg
+            value = dict(default)
+
+        _config_cache[path] = {"mtime": mtime, "value": value}
+        return dict(value)
+
+
+def get_avatar_config():
+    def parse(raw):
+        cfg = dict(DEFAULT_AVATAR_CONFIG)
+        for key in ("primaryColor", "accentColor"):
+            if raw.get(key):
+                cfg[key] = raw[key]
+        for key in ("antenna", "shoulderLights", "chestCore"):
+            if key in raw:
+                cfg[key] = bool(raw[key])
+        return cfg
+
+    return _load_config_cached(AVATAR_CONFIG_PATH, DEFAULT_AVATAR_CONFIG, parse)
 
 
 def get_scope_config():
-    # Read fresh on every action (same pattern as avatar config) so edits to the blocklist
-    # apply immediately - no rebuild, no host restart needed.
-    cfg = {"blockedProcesses": []}
-    if SCOPE_CONFIG_PATH.exists():
-        try:
-            with open(SCOPE_CONFIG_PATH, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            processes = raw.get("blockedProcesses")
-            if isinstance(processes, list):
-                cfg["blockedProcesses"] = [str(p).strip().lower() for p in processes if str(p).strip()]
-        except (OSError, json.JSONDecodeError):
-            pass
-    return cfg
+    def parse(raw):
+        cfg = {"blockedProcesses": []}
+        processes = raw.get("blockedProcesses")
+        if isinstance(processes, list):
+            cfg["blockedProcesses"] = [str(p).strip().lower() for p in processes if str(p).strip()]
+        return cfg
+
+    return _load_config_cached(SCOPE_CONFIG_PATH, {"blockedProcesses": []}, parse)

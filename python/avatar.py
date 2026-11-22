@@ -66,7 +66,8 @@ class AvatarWindow:
     duration_ms and calls on_done(); for the idle state it stays up indefinitely and the
     caller wires its own mouse handlers (see host.py)."""
 
-    def __init__(self, root, x, y, state="acting", duration_ms=650, cfg=None, on_done=None):
+    def __init__(self, root, x, y, state="acting", duration_ms=650, cfg=None, on_done=None,
+                 tick_ms=30):
         self.root = root
         self.state = state
         self.start = time.time()
@@ -74,6 +75,11 @@ class AvatarWindow:
         self.cfg = cfg or {}
         self.on_done = on_done
         self._destroyed = False
+        # Transient action popups redraw at ~33fps for snappy-feeling state transitions; the
+        # idle avatar (host.py passes a slower tick_ms) runs for as long as host.py does, so a
+        # much lower redraw rate matters for CPU use on a resource-constrained machine - bob/
+        # blink don't need 33fps to read as smooth for a mostly-still background character.
+        self.tick_ms = tick_ms
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -100,7 +106,7 @@ class AvatarWindow:
             if self.on_done:
                 self.on_done()
             return
-        self.win.after(30, self._tick)
+        self.win.after(self.tick_ms, self._tick)
 
     def destroy(self):
         if self._destroyed:
