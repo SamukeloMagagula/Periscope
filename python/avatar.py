@@ -6,7 +6,8 @@ import ctypes
 import math
 import time
 import tkinter as tk
-from tkinter import messagebox
+
+import state
 
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
@@ -210,23 +211,76 @@ class AvatarWindow:
                 c.create_oval(brx0 + dx, dot_y, brx0 + dx + 4, dot_y + 4, fill="#5a5a64", outline="")
 
 
-def confirm_action(root, message: str) -> bool:
-    # A plain messagebox.askyesno() with no parent can open BEHIND other windows (VS Code,
-    # a browser, etc.) instead of on top - found live: it silently blocked the whole host
-    # (confirm dialogs run on the main thread) with no visible indication why. A topmost,
-    # transient anchor window forces the dialog itself to the front, matching the old
-    # PowerShell version's explicit TopMost owner form.
+CONFIRM_TIMEOUT_SEC = 120  # fail-safe: an unanswered dialog auto-denies rather than hanging
+                           # the host forever - found live, this exact scenario happened once
+                           # already (a dialog opened behind other windows and sat unanswered,
+                           # blocking all further actions until manually brought to front).
+
+
+def confirm_action(root, message: str, timeout_sec: int = CONFIRM_TIMEOUT_SEC) -> bool:
+    # A custom dialog instead of messagebox.askyesno(): tkinter's stock messagebox has no
+    # timeout parameter at all, so a fail-safe isn't possible with it. Still topmost/transient
+    # to an anchor window for the same reason as before - so it can't silently open behind
+    # other windows (VS Code, a browser) and go unnoticed.
     anchor = tk.Toplevel(root)
     anchor.withdraw()
     anchor.attributes("-topmost", True)
-    anchor.update_idletasks()
-    try:
-        result = messagebox.askyesno(
-            "Periscope - Confirm Action", f"{message}\n\nAllow this action?", parent=anchor
-        )
-    finally:
-        anchor.destroy()
-    return result
+
+    dialog = tk.Toplevel(anchor)
+    dialog.title("Periscope - Confirm Action")
+    dialog.attributes("-topmost", True)
+    dialog.resizable(False, False)
+    dialog.configure(bg="#f0f0f0")
+
+    result = {"value": False, "timed_out": False}
+
+    def choose(value, timed_out=False):
+        result["value"] = value
+        result["timed_out"] = timed_out
+        dialog.destroy()
+
+    dialog.protocol("WM_DELETE_WINDOW", lambda: choose(False))  # closing the window = deny
+
+    tk.Label(
+        dialog, text=f"{message}\n\nAllow this action?", justify="left", wraplength=360,
+        bg="#f0f0f0", padx=20, pady=15,
+    ).pack()
+
+    countdown_label = tk.Label(dialog, text="", fg="#888888", font=("Segoe UI", 8), bg="#f0f0f0")
+    countdown_label.pack(pady=(0, 8))
+
+    btn_frame = tk.Frame(dialog, bg="#f0f0f0")
+    btn_frame.pack(pady=(0, 15))
+    tk.Button(btn_frame, text="Yes", width=10, command=lambda: choose(True)).pack(side="left", padx=10)
+    tk.Button(btn_frame, text="No", width=10, command=lambda: choose(False)).pack(side="left", padx=10)
+
+    deadline = time.time() + timeout_sec
+
+    def tick_countdown():
+        if not dialog.winfo_exists():
+            return
+        remaining = int(deadline - time.time())
+        if remaining <= 0:
+            choose(False, timed_out=True)
+            return
+        countdown_label.config(text=f"Auto-denies in {remaining}s if unanswered")
+        dialog.after(500, tick_countdown)
+
+    tick_countdown()
+
+    dialog.update_idletasks()
+    w, h = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
+    sw, sh = dialog.winfo_screenwidth(), dialog.winfo_screenheight()
+    dialog.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+
+    dialog.grab_set()
+    root.wait_window(dialog)
+    anchor.destroy()
+
+    if result["timed_out"]:
+        state.write_log(f"CONFIRM TIMED OUT (auto-denied after {timeout_sec}s): {message}")
+
+    return result["value"]
 
 
 def show_toast(root, text: str, duration_ms: int = 1100):

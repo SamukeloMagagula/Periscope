@@ -116,9 +116,16 @@ directly at `host.py` — those are two different, separately-managed processes.
 ## Safety model
 
 Every **mutating** action (`move_mouse`, `click`, `type_text`, `send_keys`, `focus_window`,
-`set_clipboard`) pops a native Windows Yes/No dialog before executing, describing exactly what
-is about to happen. A "No" response raises a denial back to the calling AI; nothing executes
-until approved.
+`set_clipboard`) pops a Yes/No dialog before executing, describing exactly what is about to
+happen, with a visible countdown ("Auto-denies in 118s if unanswered"). A "No" response, or
+closing the dialog, raises a denial back to the calling AI; nothing executes until approved.
+
+If the dialog goes unanswered for 2 minutes (`CONFIRM_TIMEOUT_SEC` in `python/avatar.py`), it
+auto-denies rather than waiting forever — a fail-safe found necessary live: a dialog that opens
+behind another window (fixed separately, see below) and goes unnoticed blocks the whole host
+indefinitely otherwise, since confirm dialogs run on `host.py`'s single main thread. A timeout
+is logged distinctly from an explicit "No" (`CONFIRM TIMED OUT (auto-denied after ...)`  on the
+dashboard), so it's clear afterward that nobody actually reviewed and rejected the action.
 
 Read-only actions (`screenshot`, `list_screens`, `list_windows`, `get_clipboard`) run without a
 prompt.
