@@ -11,6 +11,24 @@ class ActionDenied(Exception):
     pass
 
 
+class ActionBlocked(Exception):
+    pass
+
+
+def _check_scope(process_name: str, action_desc: str):
+    # Absolute guardrail: checked unconditionally, before confirm/auto-task logic, and not
+    # skippable via skipConfirm or an active autonomous task - the point of a blocklist is
+    # that it applies regardless of anything else, not something a running task can bypass.
+    if not process_name:
+        return
+    scope_cfg = state.get_scope_config()
+    if process_name.lower() in scope_cfg["blockedProcesses"]:
+        raise ActionBlocked(
+            f"Blocked by Periscope scope policy: {action_desc} targets '{process_name}', "
+            f"which is on the blocklist (assets/scope.config.json)."
+        )
+
+
 def _target_point(root, params):
     if "x" in params and "y" in params:
         return {"x": int(params["x"]), "y": int(params["y"])}
@@ -69,6 +87,7 @@ def dispatch(root, cfg, action: str, params: dict):
         btn = p.get("button", "left")
         count = int(p.get("count", 1))
         msg = f"{btn} click x{count} at ({p['x']}, {p['y']})"
+        _check_scope(w32.process_at_point(int(p["x"]), int(p["y"])), msg)
         _confirm_or_raise(root, cfg, p, msg)
         _announce(root, p, msg, no_toast=True)
         _acting_avatar(root, cfg, p)
@@ -77,6 +96,7 @@ def dispatch(root, cfg, action: str, params: dict):
     if action == "typeText":
         text = p["text"]
         preview = text if len(text) <= 120 else text[:120] + "..."
+        _check_scope(w32.focused_process_name(), f'typing text: "{preview}"')
         _confirm_or_raise(root, cfg, p, f'Type text: "{preview}"')
         _announce(root, p, f'typing: "{preview}"', no_toast=True)
         _acting_avatar(root, cfg, p)
@@ -84,6 +104,7 @@ def dispatch(root, cfg, action: str, params: dict):
 
     if action == "sendKeys":
         keys = p["keys"]
+        _check_scope(w32.focused_process_name(), f"sending keys: {keys}")
         _confirm_or_raise(root, cfg, p, f"Send key combo: {keys}")
         _announce(root, p, f"sending keys: {keys}", no_toast=True)
         _acting_avatar(root, cfg, p)
@@ -94,6 +115,7 @@ def dispatch(root, cfg, action: str, params: dict):
 
     if action == "focusWindow":
         pid = int(p["pid"])
+        _check_scope(w32.get_process_name(pid), f"focusing window (PID {pid})")
         _confirm_or_raise(root, cfg, p, f"Focus window (PID {pid})")
         _announce(root, p, f"focusing window (PID {pid})", no_toast=True)
         _acting_avatar(root, cfg, p)

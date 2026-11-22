@@ -191,6 +191,32 @@ confirmation prompt per action, inside a revocable window:
   unbounded), with its own **Stop** button — an independent kill-switch that doesn't depend on
   the calling AI cooperating or on ending the task itself.
 
+### Action scoping (app blocklist)
+
+Edit `assets/scope.config.json` to name processes Periscope must never interact with —
+password managers, banking apps, anything you want permanently off-limits regardless of
+confirmation:
+
+```json
+{
+  "blockedProcesses": ["keepass", "1password", "bitwarden"]
+}
+```
+
+Process names are case-insensitive and match without `.exe` (same form `list_windows` reports
+as `processName`). This applies to `click` (checked against whatever window is actually at the
+target point), `focus_window` (checked against the target pid), and `type_text`/`send_keys`
+(checked against whichever window currently holds keyboard focus).
+
+This is a **hard block, not a confirmation** — a blocked action fails immediately with a clear
+error, no Yes/No dialog, and critically it is **not** skippable via `skipConfirm` or an active
+`start_task` autonomous run; those only ever bypass the confirm dialog, never the scope check.
+Read fresh before every check (same as the avatar config), so edits apply immediately with no
+rebuild or host restart.
+
+`move_mouse` and `set_clipboard` are intentionally not scoped — scoping covers actions that
+directly interact with a specific app's content or window, not just moving the cursor.
+
 ## Tools
 
 | Tool | Confirms? | Description |
@@ -233,6 +259,7 @@ python/state.py         shared activity-log, autonomous-task, avatar-position/co
 python/install_shortcut.py  creates/refreshes the Desktop shortcut to host.py (pythonw.exe)
 python/requirements.txt  pywin32, pystray, Pillow
 assets/avatar.config.json  avatar colors/accessories - edit to customize, no rebuild needed
+assets/scope.config.json  app blocklist for action scoping - edit to customize, no rebuild needed
 Launch Periscope.cmd    shortcut to python/launcher.py (the picker alone, without the host)
 ```
 
@@ -254,6 +281,10 @@ Launch Periscope.cmd    shortcut to python/launcher.py (the picker alone, withou
 - Mutating actions still take roughly 0.5-1.5s for the avatar's thinking/acting animation to
   play out (not counting time spent waiting on the confirm dialog itself) — this is deliberate
   visual feedback, not process overhead.
+- Action scoping matches on the target process's `.exe` name only, read from the OS at the
+  moment of the action. It's a guardrail against the AI's own actions, not a sandbox against a
+  determined adversary — a process renamed/repackaged under a different executable name won't
+  match the blocklist.
 
 ## License
 

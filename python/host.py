@@ -114,6 +114,8 @@ def _poll_request_queue():
                 response_box.put({"ok": True, "result": result})
             except dispatch.ActionDenied as e:
                 response_box.put({"ok": False, "error": str(e), "denied": True})
+            except dispatch.ActionBlocked as e:
+                response_box.put({"ok": False, "error": str(e), "denied": False, "blocked": True})
             except Exception as e:
                 response_box.put({"ok": False, "error": str(e), "denied": False})
     except queue.Empty:

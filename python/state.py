@@ -17,6 +17,11 @@ AVATAR_POS_PATH = TEMP_DIR / "periscope-avatar-pos.json"
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 AVATAR_CONFIG_PATH = ASSETS_DIR / "avatar.config.json"
+SCOPE_CONFIG_PATH = ASSETS_DIR / "scope.config.json"
+
+DEFAULT_SCOPE_CONFIG = {
+    "blockedProcesses": [],
+}
 
 DEFAULT_AVATAR_CONFIG = {
     "primaryColor": "#4696FF",
@@ -133,6 +138,22 @@ def get_avatar_config():
             for key in ("antenna", "shoulderLights", "chestCore"):
                 if key in raw:
                     cfg[key] = bool(raw[key])
+        except (OSError, json.JSONDecodeError):
+            pass
+    return cfg
+
+
+def get_scope_config():
+    # Read fresh on every action (same pattern as avatar config) so edits to the blocklist
+    # apply immediately - no rebuild, no host restart needed.
+    cfg = {"blockedProcesses": []}
+    if SCOPE_CONFIG_PATH.exists():
+        try:
+            with open(SCOPE_CONFIG_PATH, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            processes = raw.get("blockedProcesses")
+            if isinstance(processes, list):
+                cfg["blockedProcesses"] = [str(p).strip().lower() for p in processes if str(p).strip()]
         except (OSError, json.JSONDecodeError):
             pass
     return cfg

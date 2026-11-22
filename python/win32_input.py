@@ -211,6 +211,30 @@ def _process_name(pid: int) -> str:
         return ""
 
 
+def get_process_name(pid: int) -> str:
+    return _process_name(pid)
+
+
+def process_at_point(x: int, y: int) -> str:
+    # Used by action scoping (dispatch.py) to find out which app a click would actually land
+    # on, before the click happens.
+    hwnd = win32gui.WindowFromPoint((int(x), int(y)))
+    if not hwnd:
+        return ""
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    return _process_name(pid)
+
+
+def focused_process_name() -> str:
+    # Used by action scoping for type_text/send_keys, which act on whatever currently has
+    # keyboard focus rather than a specific target window.
+    hwnd = win32gui.GetForegroundWindow()
+    if not hwnd:
+        return ""
+    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    return _process_name(pid)
+
+
 def focus_window(pid: int):
     target_hwnd = None
 
