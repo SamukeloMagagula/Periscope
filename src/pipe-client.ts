@@ -1,7 +1,18 @@
 import { connect } from "node:net";
 
 const PIPE_PATH = "\\\\.\\pipe\\PeriscopeActionPipe";
+// Two different concerns, two different timeouts. Connecting to the pipe either succeeds
+// near-instantly or fails near-instantly with ENOENT (host.py isn't running) - 5s is plenty
+// and gives quick, clear feedback either way. But WAITING FOR A RESPONSE after that is a
+// different matter: a mutating action pops a confirm dialog a human needs to notice and
+// click, which Periscope deliberately allows up to CONFIRM_TIMEOUT_SEC (120s, see
+// python/avatar.py) to happen before auto-denying. A single 5s timeout covering both phases
+// meant every confirm dialog that took a human more than 5 seconds to notice and approve
+// produced a false "didn't respond in time" error here even though the action went through
+// fine on the Python side moments later - found live, this was very likely the dominant
+// real-world cause of "it just froze/errored" reports, not an edge case at all.
 const CONNECT_TIMEOUT_MS = 5000;
+const RESPONSE_TIMEOUT_MS = 150_000; // comfortably longer than the 120s confirm-dialog window
 
 export class ActionDeniedError extends Error {}
 
@@ -13,11 +24,14 @@ export async function runAction(action: string, params: Record<string, unknown> 
     let buffer = "";
     let settled = false;
 
-    const timer = setTimeout(() => {
+    let timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       socket.destroy();
-      reject(new Error("Periscope host didn't respond in time."));
+      // A hang here (as opposed to the fast ENOENT the 'error' handler below normally gets
+      // when host.py genuinely isn't running) is unusual enough not to presume a specific
+      // cause.
+      reject(new Error("Couldn't connect to the Periscope host in time - is it running?"));
     }, CONNECT_TIMEOUT_MS);
 
     const finish = (fn: () => void) => {
@@ -28,6 +42,16 @@ export async function runAction(action: string, params: Record<string, unknown> 
     };
 
     socket.on("connect", () => {
+      clearTimeout(timer);
+      // Swap to the long response window now that we're actually connected - from here on,
+      // any further delay is the action (and a possible confirm dialog) running, not a
+      // connection problem.
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        reject(new Error("Periscope host didn't respond in time."));
+      }, RESPONSE_TIMEOUT_MS);
       socket.write(request);
     });
 

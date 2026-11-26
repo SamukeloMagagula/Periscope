@@ -127,6 +127,16 @@ indefinitely otherwise, since confirm dialogs run on `host.py`'s single main thr
 is logged distinctly from an explicit "No" (`CONFIRM TIMED OUT (auto-denied after ...)`  on the
 dashboard), so it's clear afterward that nobody actually reviewed and rejected the action.
 
+The MCP server's own pipe client (`src/pipe-client.ts`) waits up to 150 seconds for a
+response once connected — comfortably longer than that 2-minute confirm window. A single
+short timeout covering both "is the host running" and "waiting for a human to click a dialog"
+used to mean any confirm dialog that took longer than 5 seconds to notice and approve produced
+a false "didn't respond in time" error back to the calling AI, even though the action went
+through fine moments later on the Python side — verified live to be the actual cause in at
+least one case, and likely the single biggest contributor to "it just froze" reports generally,
+since waiting more than 5 seconds to notice and click a popup is the normal case, not an edge
+case. Connecting to the pipe at all still fails fast (5s) if `host.py` genuinely isn't running.
+
 Read-only actions (`screenshot`, `list_screens`, `list_windows`, `get_clipboard`) run without a
 prompt.
 
