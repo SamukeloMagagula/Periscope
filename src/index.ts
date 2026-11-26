@@ -202,18 +202,22 @@ server.registerTool(
     description:
       "Begin an autonomous run: pops ONE confirmation dialog describing the task, and if approved, subsequent " +
       "mutating actions (click, type_text, send_keys, move_mouse, focus_window, set_clipboard) skip their " +
-      "individual confirmation prompts until end_task is called or (if a duration was given) the time limit " +
-      "expires. With no 'minutes' argument this runs indefinitely, until end_task is called or the user hits " +
-      "Stop on the HUD panel — there is no default timeout. The HUD panel shows the task is active with a " +
-      "one-click Stop button the whole time, as an independent kill-switch. Use this for multi-step work the " +
-      "user has already approved at a high level; always call end_task when the task is actually done, even " +
-      "if running indefinitely, rather than leaving it open.",
+      "individual confirmation prompts until end_task is called, the time limit (if any) expires, or the " +
+      "action budget (if any) is used up. With no 'minutes' argument this runs indefinitely, until end_task " +
+      "is called or the user hits Stop on the HUD panel — there is no default timeout, but setting " +
+      "'maxActions' is recommended for any run you intend to leave genuinely unattended, so a mistake can't " +
+      "run away taking far more actions than intended. The HUD panel shows the task is active (with its " +
+      "action count against the budget, if set) with a one-click Stop button the whole time, as an " +
+      "independent kill-switch. Use this for multi-step work the user has already approved at a high level; " +
+      "always call end_task when the task is actually done, even if running indefinitely, rather than " +
+      "leaving it open.",
     inputSchema: {
       description: z.string().describe("Plain-English description of what you're about to do, shown in the confirmation dialog and the HUD."),
       minutes: z.number().int().min(1).optional().describe("Optional time limit in minutes. Omit for an indefinite run (until end_task or the HUD Stop button)."),
+      maxActions: z.number().int().min(1).optional().describe("Optional cap on the number of mutating actions this run may take before it auto-stops (logged on the dashboard). Omit for no cap."),
     },
   },
-  async ({ description, minutes }) => callAction("startTask", { description, minutes })
+  async ({ description, minutes, maxActions }) => callAction("startTask", { description, minutes, maxActions })
 );
 
 server.registerTool(

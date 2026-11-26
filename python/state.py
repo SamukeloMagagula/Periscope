@@ -115,18 +115,26 @@ def get_task_info():
         return None
 
 
-def start_auto_task(description: str, minutes: int | None):
+def start_auto_task(description: str, minutes: int | None, max_actions: int | None = None):
     from datetime import timedelta
 
     indefinite = not minutes
     if minutes and minutes < 1:
         minutes = 1
+    if max_actions is not None and max_actions < 1:
+        max_actions = 1
     expiry = (
         datetime.max.replace(tzinfo=timezone.utc)
         if indefinite
         else datetime.now(timezone.utc) + timedelta(minutes=minutes)
     )
-    data = {"description": description, "expiry": expiry.isoformat(), "indefinite": indefinite}
+    data = {
+        "description": description,
+        "expiry": expiry.isoformat(),
+        "indefinite": indefinite,
+        "maxActions": max_actions,
+        "actionCount": 0,
+    }
     with open(TASK_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f)
     return {"started": True, **data}
@@ -138,6 +146,49 @@ def stop_auto_task():
     except OSError:
         pass
     return {"ended": True}
+
+
+def register_auto_action():
+    # Called once per mutating action taken while a task is active, to count it against
+    # maxActions (if the task was started with one). Returns a (status, count, max_actions)
+    # tuple:
+    #   "no_task"       - no active task (nothing to count against; caller shouldn't happen)
+    #   "limit_reached" - the cap was already hit by a previous action; this one must not run,
+    #                      and the task has just been stopped
+    #   "ended"         - this action is allowed to run, but it's the one that hit the cap,
+    #                      so the task has just been stopped (no further actions allowed)
+    #   "ok"            - under the cap, task stays active
+    if not TASK_PATH.exists():
+        return ("no_task", None, None)
+    try:
+        with open(TASK_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return ("no_task", None, None)
+
+    max_actions = data.get("maxActions")
+    count = data.get("actionCount", 0)
+
+    if max_actions and count >= max_actions:
+        try:
+            os.remove(TASK_PATH)
+        except OSError:
+            pass
+        return ("limit_reached", count, max_actions)
+
+    count += 1
+    data["actionCount"] = count
+
+    if max_actions and count >= max_actions:
+        try:
+            os.remove(TASK_PATH)
+        except OSError:
+            pass
+        return ("ended", count, max_actions)
+
+    with open(TASK_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f)
+    return ("ok", count, max_actions)
 
 
 def get_avatar_position():

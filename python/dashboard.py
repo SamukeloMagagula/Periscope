@@ -57,7 +57,8 @@ async function refresh() {
 
     if (status.active) {
       statusEl.className = 'status auto';
-      statusEl.textContent = '* AUTO: ' + status.description + (status.indefinite ? ' (indefinite)' : '');
+      const budget = status.maxActions ? ' [' + status.actionCount + '/' + status.maxActions + ' actions]' : '';
+      statusEl.textContent = '* AUTO: ' + status.description + (status.indefinite ? ' (indefinite)' : '') + budget;
       stopBtn.style.display = 'inline-block';
     } else {
       statusEl.className = 'status idle';
@@ -106,7 +107,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             if state.is_auto_task_active():
                 info = state.get_task_info() or {}
-                body = {"active": True, "description": info.get("description"), "indefinite": bool(info.get("indefinite"))}
+                body = {
+                    "active": True,
+                    "description": info.get("description"),
+                    "indefinite": bool(info.get("indefinite")),
+                    "maxActions": info.get("maxActions"),
+                    "actionCount": info.get("actionCount", 0),
+                }
             else:
                 body = {"active": False}
             self._send(json.dumps(body), "application/json")

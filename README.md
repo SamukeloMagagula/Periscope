@@ -225,17 +225,24 @@ and confirming the animation and the timeout both still completed correctly afte
 
 ### Bounded autonomous mode
 
-`start_task(description, minutes?)` / `end_task()` let multi-step work run without a
-confirmation prompt per action, inside a revocable window:
+`start_task(description, minutes?, maxActions?)` / `end_task()` let multi-step work run
+without a confirmation prompt per action, inside a revocable window:
 
 - `start_task` pops one confirmation dialog for the whole task. If approved, mutating actions
   skip their individual prompts (still toasting/logging, tagged `[auto]`) until `end_task` is
   called. With no `minutes` argument the run is indefinite — there is no default timeout; pass
   `minutes` to bound it instead. State lives in `host.py`'s process (an expiry timestamp
   written to a file), not something the calling AI can silently extend.
+- `maxActions` bounds the run by *action count* instead of (or alongside) time — once that many
+  mutating actions have run, the task auto-stops and logs why, and any further action is
+  rejected outright rather than executing. This matters specifically for a run left genuinely
+  unattended: a time limit alone doesn't protect against a loop that takes far more actions
+  than intended within that window, so for any task nobody's actively watching, pass
+  `maxActions` too, not just `minutes`.
 - The dashboard shows the active task's description continuously (flagged `(indefinite)` when
-  unbounded), with its own **Stop** button — an independent kill-switch that doesn't depend on
-  the calling AI cooperating or on ending the task itself.
+  unbounded, with an `[N/maxActions actions]` counter when a cap is set), with its own **Stop**
+  button — an independent kill-switch that doesn't depend on the calling AI cooperating or on
+  ending the task itself.
 
 ### Action scoping (app blocklist)
 
