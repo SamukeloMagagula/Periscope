@@ -17,6 +17,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import traceback
 import webbrowser
 
 import pystray
@@ -102,6 +103,33 @@ def _pipe_server_loop():
 
 root = tk.Tk()
 root.withdraw()
+
+# Defense in depth, the Python-side equivalent of the old PowerShell host's
+# SetUnhandledExceptionMode/ThreadException handler: Tkinter's default behavior for an
+# exception raised inside an event-loop callback (a Button command, an after()-scheduled
+# tick like the avatar's redraw loop or a confirm dialog's countdown timer) is to print a
+# traceback to stderr and otherwise swallow it, continuing the mainloop. Under pythonw.exe
+# there is no console at all, so that traceback goes nowhere - a bug in exactly these spots
+# would previously manifest as a silent freeze with zero evidence (a confirm dialog's timeout
+# timer dying mid-countdown, for instance, would leave it open forever with nothing logged).
+# This makes that class of bug show up on the dashboard and in a crash file instead.
+_CRASH_LOG_PATH = state.TEMP_DIR / "periscope-tk-crashes.log"
+
+
+def _report_tk_exception(exc_type, exc_value, exc_tb):
+    tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    try:
+        state.write_log(f"UI ERROR (recovered): {exc_type.__name__}: {exc_value}")
+    except Exception:
+        pass
+    try:
+        with open(_CRASH_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"--- {exc_type.__name__} ---\n{tb_text}\n")
+    except Exception:
+        pass
+
+
+root.report_callback_exception = _report_tk_exception
 
 
 def _poll_request_queue():

@@ -134,6 +134,26 @@ Set `PERISCOPE_CONFIRM=0` in the MCP server's environment to disable confirmatio
 entirely (not recommended — removes the only hard gate between an AI's decision and an action
 on the host).
 
+### Crash resilience
+
+`host.py` runs on `pythonw.exe`, which has no console and therefore no stderr destination —
+Tkinter's default behavior for an exception raised inside an event-loop callback (a button
+click, the avatar's redraw tick, a confirm dialog's countdown timer) is to print a traceback
+and otherwise swallow it, which under `pythonw.exe` means the traceback goes nowhere and the
+bug is completely invisible. A real incident traced to exactly this: a dialog's countdown timer
+hit an unrelated error mid-countdown, silently stopped rescheduling itself, and the dialog sat
+open forever with no visible explanation — from the outside this looked like Periscope simply
+freezing, with nothing to diagnose.
+
+Two fixes, not one patch: `root.report_callback_exception` is overridden to log any such
+exception to the activity log (visible on the dashboard) and to
+`%TEMP%\periscope-tk-crashes.log` with a full traceback, instead of vanishing. Separately, the
+avatar's redraw loop and the confirm dialog's timeout logic were made self-healing: a failure
+in one frame of the avatar's animation doesn't stop subsequent frames, and a failure in the
+confirm dialog's countdown *label update* can't prevent the actual timeout deadline from still
+firing — verified with fault-injection tests (forcing a real exception on a specific frame/tick
+and confirming the animation and the timeout both still completed correctly afterward).
+
 ### On-screen activity indicators
 
 - **Avatar.** A small mech character — head with a glowing visor, antenna, torso with a

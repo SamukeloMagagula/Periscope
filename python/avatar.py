@@ -100,7 +100,18 @@ class AvatarWindow:
             return
         elapsed = time.time() - self.start
         progress = min(1.0, max(0.0, elapsed / max(0.001, self.duration)))
-        self._draw(elapsed, progress)
+        try:
+            self._draw(elapsed, progress)
+        except Exception as e:
+            # Self-healing: one bad frame (e.g. an unexpected config value) shouldn't
+            # permanently freeze this avatar's animation - log it and keep ticking rather
+            # than letting the exception escape to Tkinter's default handler, which would
+            # otherwise silently stop this recurring after() chain for good under pythonw.exe
+            # (no console to show the traceback on).
+            try:
+                state.write_log(f"UI ERROR (recovered, avatar draw): {type(e).__name__}: {e}")
+            except Exception:
+                pass
 
         if elapsed >= self.duration:
             self.destroy()
@@ -257,13 +268,24 @@ def confirm_action(root, message: str, timeout_sec: int = CONFIRM_TIMEOUT_SEC) -
     deadline = time.time() + timeout_sec
 
     def tick_countdown():
-        if not dialog.winfo_exists():
+        try:
+            if not dialog.winfo_exists():
+                return  # already closed via a button/the X - stop the chain
+        except Exception:
             return
+
+        # Deadline check happens before anything that could fail (the label update), so a
+        # problem updating the label can't prevent the actual timeout from firing on schedule
+        # - it would just mean a dialog with a stale/frozen-looking countdown number that
+        # still correctly auto-denies when the time's up, instead of staying open forever.
         remaining = int(deadline - time.time())
         if remaining <= 0:
             choose(False, timed_out=True)
             return
-        countdown_label.config(text=f"Auto-denies in {remaining}s if unanswered")
+        try:
+            countdown_label.config(text=f"Auto-denies in {remaining}s if unanswered")
+        except Exception:
+            pass
         dialog.after(500, tick_countdown)
 
     tick_countdown()
