@@ -137,6 +137,15 @@ least one case, and likely the single biggest contributor to "it just froze" rep
 since waiting more than 5 seconds to notice and click a popup is the normal case, not an edge
 case. Connecting to the pipe at all still fails fast (5s) if `host.py` genuinely isn't running.
 
+A related fix on the host side: `host.py`'s named pipe accept loop used to handle one connection
+at a time end-to-end, including the confirm-dialog wait described above, before accepting the
+next. Any action requested while a prior one was still sitting at an unanswered dialog couldn't
+even connect, and failed with the same misleading "didn't respond in time" error — despite the
+host being fine and simply busy with the first request. Each connection now runs on its own
+thread so the accept loop can take the next one immediately, regardless of how long a prior
+request is taking; verified with an isolated test where a second client is served in under a
+millisecond while a first is still seconds into a simulated confirm-dialog wait.
+
 Read-only actions (`screenshot`, `list_screens`, `list_windows`, `get_clipboard`) run without a
 prompt.
 
