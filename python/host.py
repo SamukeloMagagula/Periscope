@@ -53,6 +53,42 @@ if win32api.GetLastError() == winerror.ERROR_ALREADY_EXISTS:
 # --- named pipe server (background thread; hands actual work to the main/Tk thread) ---
 
 
+def _handle_pipe_connection(pipe):
+    try:
+        buf = b""
+        while b"\n" not in buf:
+            _, data = win32file.ReadFile(pipe, 65536)
+            if not data:
+                break
+            buf += data
+        line = buf.split(b"\n", 1)[0].decode("utf-8")
+
+        try:
+            req = json.loads(line)
+            response_box: "queue.Queue[dict]" = queue.Queue()
+            _request_queue.put((req, response_box))
+            # This get() can block for up to the 120s confirm-dialog window (see avatar.py) -
+            # that's expected and fine here, since it happens on this connection's own thread,
+            # not the accept loop below.
+            response = response_box.get()
+        except Exception as e:  # malformed request JSON etc.
+            response = {"ok": False, "error": str(e), "denied": False}
+
+        win32file.WriteFile(pipe, (json.dumps(response) + "\n").encode("utf-8"))
+        # Without this, DisconnectNamedPipe can tear down the connection before the
+        # client finishes reading what WriteFile just wrote, surfacing as EPIPE/ECONNRESET
+        # on the Node side even though the server "succeeded" - found via live testing.
+        win32file.FlushFileBuffers(pipe)
+    except Exception:
+        pass  # client disconnected early or similar pipe-level hiccup - keep serving
+    finally:
+        try:
+            win32pipe.DisconnectNamedPipe(pipe)
+            win32file.CloseHandle(pipe)
+        except Exception:
+            pass
+
+
 def _pipe_server_loop():
     while True:
         pipe = win32pipe.CreateNamedPipe(
@@ -67,36 +103,24 @@ def _pipe_server_loop():
         )
         try:
             win32pipe.ConnectNamedPipe(pipe, None)
-
-            buf = b""
-            while b"\n" not in buf:
-                _, data = win32file.ReadFile(pipe, 65536)
-                if not data:
-                    break
-                buf += data
-            line = buf.split(b"\n", 1)[0].decode("utf-8")
-
-            try:
-                req = json.loads(line)
-                response_box: "queue.Queue[dict]" = queue.Queue()
-                _request_queue.put((req, response_box))
-                response = response_box.get()
-            except Exception as e:  # malformed request JSON etc.
-                response = {"ok": False, "error": str(e), "denied": False}
-
-            win32file.WriteFile(pipe, (json.dumps(response) + "\n").encode("utf-8"))
-            # Without this, DisconnectNamedPipe can tear down the connection before the
-            # client finishes reading what WriteFile just wrote, surfacing as EPIPE/ECONNRESET
-            # on the Node side even though the server "succeeded" - found via live testing.
-            win32file.FlushFileBuffers(pipe)
         except Exception:
-            pass  # client disconnected early or similar pipe-level hiccup - keep serving
-        finally:
             try:
-                win32pipe.DisconnectNamedPipe(pipe)
                 win32file.CloseHandle(pipe)
             except Exception:
                 pass
+            continue
+
+        # Handing this connection to its own thread - instead of processing it right here
+        # before looping back to accept the next one - is what lets a second action connect
+        # and get served while a first one is still sitting at a confirm dialog. Before this
+        # fix, this loop handled exactly one connection at a time end-to-end (including the
+        # up-to-120s wait for a human to click a confirm dialog), so any action requested
+        # during that window couldn't even connect and failed with a misleading "Couldn't
+        # connect to the Periscope host in time" error despite the host being perfectly fine
+        # and simply busy - found via code review, likely a second real contributor to the
+        # reported "it lagged and broke" production incident alongside the pipe-client
+        # timeout fix in src/pipe-client.ts.
+        threading.Thread(target=_handle_pipe_connection, args=(pipe,), daemon=True).start()
 
 
 # --- main Tk root (never shown itself - just the event-loop host for Toplevel popups) ---
